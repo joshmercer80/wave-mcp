@@ -394,18 +394,17 @@ export function registerInvoiceTools(client: WaveClient) {
       parameters: {
         type: 'object',
         properties: {
-          businessId: { type: 'string', description: 'Business ID' },
           invoiceId: { type: 'string', description: 'Invoice ID' },
           to: { type: 'array', items: { type: 'string' }, description: 'Recipient email addresses' },
           subject: { type: 'string', description: 'Email subject' },
           message: { type: 'string', description: 'Email message body' },
+          attachPDF: { type: 'boolean', description: 'Attach invoice PDF to the email' },
+          fromAddress: { type: 'string', description: 'Email address the invoice is sent from' },
+          ccMyself: { type: 'boolean', description: 'CC yourself on the email' },
         },
-        required: ['invoiceId'],
+        required: ['invoiceId', 'to', 'attachPDF'],
       },
       handler: async (args: any) => {
-        const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
-
         const mutation = `
           mutation SendInvoice($input: InvoiceSendInput!) {
             invoiceSend(input: $input) {
@@ -418,15 +417,18 @@ export function registerInvoiceTools(client: WaveClient) {
           }
         `;
 
-        const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            invoiceId: args.invoiceId,
-            to: args.to,
-            subject: args.subject,
-            message: args.message,
-          },
-        });
+        const input: any = {
+          invoiceId: args.invoiceId,
+          to: args.to,
+          attachPDF: args.attachPDF,
+        };
+
+        if (args.subject) input.subject = args.subject;
+        if (args.message) input.message = args.message;
+        if (args.fromAddress) input.fromAddress = args.fromAddress;
+        if (args.ccMyself !== undefined) input.ccMyself = args.ccMyself;
+
+        const result = await client.mutate(mutation, { input });
 
         if (!result.invoiceSend.didSucceed) {
           throw new Error(`Failed to send invoice: ${JSON.stringify(result.invoiceSend.inputErrors)}`);
@@ -441,15 +443,11 @@ export function registerInvoiceTools(client: WaveClient) {
       parameters: {
         type: 'object',
         properties: {
-          businessId: { type: 'string', description: 'Business ID' },
           invoiceId: { type: 'string', description: 'Invoice ID' },
         },
         required: ['invoiceId'],
       },
       handler: async (args: any) => {
-        const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
-
         const mutation = `
           mutation ApproveInvoice($input: InvoiceApproveInput!) {
             invoiceApprove(input: $input) {
@@ -468,7 +466,6 @@ export function registerInvoiceTools(client: WaveClient) {
 
         const result = await client.mutate(mutation, {
           input: {
-            businessId,
             invoiceId: args.invoiceId,
           },
         });
