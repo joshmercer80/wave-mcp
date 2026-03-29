@@ -1,9 +1,11 @@
 /**
  * Wave Chart of Accounts Tools
+ *
+ * Fixes from NoahMcGraw/wave-mcp:
+ * - wave_update_account: changed accountUpdate -> accountPatch (correct API mutation name)
  */
 
 import type { WaveClient } from '../client.js';
-import type { Account } from '../types/index.js';
 
 export function registerAccountTools(client: WaveClient) {
   return {
@@ -13,9 +15,9 @@ export function registerAccountTools(client: WaveClient) {
         type: 'object',
         properties: {
           businessId: { type: 'string', description: 'Business ID' },
-          type: { 
-            type: 'string', 
-            description: 'Filter by account type (ASSET, LIABILITY, EQUITY, INCOME, EXPENSE)' 
+          type: {
+            type: 'string',
+            description: 'Filter by account type (ASSET, LIABILITY, EQUITY, INCOME, EXPENSE)',
           },
           isArchived: { type: 'boolean', description: 'Include archived accounts (default: false)' },
           page: { type: 'number', description: 'Page number (default: 1)' },
@@ -24,7 +26,7 @@ export function registerAccountTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
           query GetAccounts($businessId: ID!, $page: Int!, $pageSize: Int!) {
@@ -50,7 +52,6 @@ export function registerAccountTools(client: WaveClient) {
                     }
                     currency {
                       code
-                      symbol
                     }
                     isArchived
                   }
@@ -71,7 +72,6 @@ export function registerAccountTools(client: WaveClient) {
         if (args.type) {
           accounts = accounts.filter((a: any) => a.type.name === args.type);
         }
-
         if (args.isArchived === false) {
           accounts = accounts.filter((a: any) => !a.isArchived);
         }
@@ -95,7 +95,7 @@ export function registerAccountTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
           query GetAccount($businessId: ID!, $accountId: ID!) {
@@ -114,7 +114,6 @@ export function registerAccountTools(client: WaveClient) {
                 }
                 currency {
                   code
-                  symbol
                 }
                 isArchived
               }
@@ -139,10 +138,10 @@ export function registerAccountTools(client: WaveClient) {
           businessId: { type: 'string', description: 'Business ID' },
           name: { type: 'string', description: 'Account name' },
           description: { type: 'string', description: 'Account description' },
-          type: { 
-            type: 'string', 
-            description: 'Account type: ASSET, LIABILITY, EQUITY, INCOME, EXPENSE',
-            enum: ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']
+          type: {
+            type: 'string',
+            description: 'Account type',
+            enum: ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'],
           },
           subtype: { type: 'string', description: 'Account subtype code' },
           currency: { type: 'string', description: 'Currency code (e.g., USD)' },
@@ -151,7 +150,7 @@ export function registerAccountTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const mutation = `
           mutation CreateAccount($input: AccountCreateInput!) {
@@ -168,9 +167,7 @@ export function registerAccountTools(client: WaveClient) {
                   name
                   value
                 }
-                currency {
-                  code
-                }
+                currency { code }
               }
               didSucceed
               inputErrors {
@@ -193,7 +190,10 @@ export function registerAccountTools(client: WaveClient) {
         });
 
         if (!result.accountCreate.didSucceed) {
-          throw new Error(`Failed to create account: ${JSON.stringify(result.accountCreate.inputErrors)}`);
+          const errs = result.accountCreate.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not create account: ${errs}`);
         }
 
         return result.accountCreate.account;
@@ -201,7 +201,7 @@ export function registerAccountTools(client: WaveClient) {
     },
 
     wave_update_account: {
-      description: 'Update an existing account',
+      description: 'Update an existing account name or description',
       parameters: {
         type: 'object',
         properties: {
@@ -214,11 +214,12 @@ export function registerAccountTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
+        // FIX: Wave API uses accountPatch, not accountUpdate
         const mutation = `
-          mutation UpdateAccount($input: AccountUpdateInput!) {
-            accountUpdate(input: $input) {
+          mutation PatchAccount($input: AccountPatchInput!) {
+            accountPatch(input: $input) {
               account {
                 id
                 name
@@ -233,20 +234,23 @@ export function registerAccountTools(client: WaveClient) {
           }
         `;
 
-        const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            accountId: args.accountId,
-            name: args.name,
-            description: args.description,
-          },
-        });
+        const input: any = {
+          businessId,
+          id: args.accountId,
+        };
+        if (args.name !== undefined) input.name = args.name;
+        if (args.description !== undefined) input.description = args.description;
 
-        if (!result.accountUpdate.didSucceed) {
-          throw new Error(`Failed to update account: ${JSON.stringify(result.accountUpdate.inputErrors)}`);
+        const result = await client.mutate(mutation, { input });
+
+        if (!result.accountPatch.didSucceed) {
+          const errs = result.accountPatch.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not update account: ${errs}`);
         }
 
-        return result.accountUpdate.account;
+        return result.accountPatch.account;
       },
     },
   };

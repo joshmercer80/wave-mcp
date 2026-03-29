@@ -1,9 +1,12 @@
 /**
  * Wave Product Tools (Products and Services)
+ *
+ * Fixes from NoahMcGraw/wave-mcp:
+ * - wave_create_product: removed isSold/isBought (not on ProductCreateInput)
+ * - wave_update_product: changed productUpdate -> productPatch (correct API mutation name)
  */
 
 import type { WaveClient } from '../client.js';
-import type { Product } from '../types/index.js';
 
 export function registerProductTools(client: WaveClient) {
   return {
@@ -22,7 +25,7 @@ export function registerProductTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
           query GetProducts($businessId: ID!, $page: Int!, $pageSize: Int!) {
@@ -61,9 +64,8 @@ export function registerProductTools(client: WaveClient) {
           pageSize: Math.min(args.pageSize || 50, 100),
         });
 
-        // Client-side filtering
         let products = result.business.products.edges.map((e: any) => e.node);
-        
+
         if (args.isSold !== undefined) {
           products = products.filter((p: any) => p.isSold === args.isSold);
         }
@@ -93,7 +95,7 @@ export function registerProductTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
           query GetProduct($businessId: ID!, $productId: ID!) {
@@ -137,14 +139,12 @@ export function registerProductTools(client: WaveClient) {
           description: { type: 'string', description: 'Product description' },
           unitPrice: { type: 'string', description: 'Default unit price' },
           incomeAccountId: { type: 'string', description: 'Income account ID' },
-          isSold: { type: 'boolean', description: 'Is this product sold to customers? (default: true)' },
-          isBought: { type: 'boolean', description: 'Is this product bought from vendors? (default: false)' },
         },
         required: ['name'],
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const mutation = `
           mutation CreateProduct($input: ProductCreateInput!) {
@@ -170,20 +170,22 @@ export function registerProductTools(client: WaveClient) {
           }
         `;
 
-        const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            name: args.name,
-            description: args.description,
-            unitPrice: args.unitPrice,
-            incomeAccountId: args.incomeAccountId,
-            isSold: args.isSold ?? true,
-            isBought: args.isBought ?? false,
-          },
-        });
+        // FIX: removed isSold/isBought — these fields are NOT on ProductCreateInput
+        const input: any = {
+          businessId,
+          name: args.name,
+        };
+        if (args.description) input.description = args.description;
+        if (args.unitPrice) input.unitPrice = args.unitPrice;
+        if (args.incomeAccountId) input.incomeAccountId = args.incomeAccountId;
+
+        const result = await client.mutate(mutation, { input });
 
         if (!result.productCreate.didSucceed) {
-          throw new Error(`Failed to create product: ${JSON.stringify(result.productCreate.inputErrors)}`);
+          const errs = result.productCreate.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not create product: ${errs}`);
         }
 
         return result.productCreate.product;
@@ -206,11 +208,12 @@ export function registerProductTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
+        // FIX: Wave API uses productPatch, not productUpdate
         const mutation = `
-          mutation UpdateProduct($input: ProductUpdateInput!) {
-            productUpdate(input: $input) {
+          mutation PatchProduct($input: ProductPatchInput!) {
+            productPatch(input: $input) {
               product {
                 id
                 name
@@ -230,27 +233,30 @@ export function registerProductTools(client: WaveClient) {
           }
         `;
 
-        const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            productId: args.productId,
-            name: args.name,
-            description: args.description,
-            unitPrice: args.unitPrice,
-            incomeAccountId: args.incomeAccountId,
-          },
-        });
+        const input: any = {
+          businessId,
+          id: args.productId,
+        };
+        if (args.name !== undefined) input.name = args.name;
+        if (args.description !== undefined) input.description = args.description;
+        if (args.unitPrice !== undefined) input.unitPrice = args.unitPrice;
+        if (args.incomeAccountId !== undefined) input.incomeAccountId = args.incomeAccountId;
 
-        if (!result.productUpdate.didSucceed) {
-          throw new Error(`Failed to update product: ${JSON.stringify(result.productUpdate.inputErrors)}`);
+        const result = await client.mutate(mutation, { input });
+
+        if (!result.productPatch.didSucceed) {
+          const errs = result.productPatch.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not update product: ${errs}`);
         }
 
-        return result.productUpdate.product;
+        return result.productPatch.product;
       },
     },
 
     wave_delete_product: {
-      description: 'Delete (archive) a product or service',
+      description: 'Archive a product or service (soft delete)',
       parameters: {
         type: 'object',
         properties: {
@@ -261,7 +267,7 @@ export function registerProductTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const mutation = `
           mutation ArchiveProduct($input: ProductArchiveInput!) {
@@ -280,17 +286,17 @@ export function registerProductTools(client: WaveClient) {
         `;
 
         const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            productId: args.productId,
-          },
+          input: { businessId, productId: args.productId },
         });
 
         if (!result.productArchive.didSucceed) {
-          throw new Error(`Failed to archive product: ${JSON.stringify(result.productArchive.inputErrors)}`);
+          const errs = result.productArchive.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not archive product: ${errs}`);
         }
 
-        return { success: true, message: 'Product archived successfully' };
+        return { success: true, message: 'Product archived.' };
       },
     },
   };

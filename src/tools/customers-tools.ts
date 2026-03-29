@@ -1,9 +1,13 @@
 /**
  * Wave Customer Tools
+ *
+ * Fixes from NoahMcGraw/wave-mcp:
+ * - wave_search_customers: removed unused $query GraphQL variable
+ * - wave_list_customers: simplified fields to match actual Customer type
+ * - wave_update_customer: changed customerUpdate -> customerPatch (correct API mutation name)
  */
 
 import type { WaveClient } from '../client.js';
-import type { Customer } from '../types/index.js';
 
 export function registerCustomerTools(client: WaveClient) {
   return {
@@ -19,7 +23,7 @@ export function registerCustomerTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required. Set it globally or pass businessId.');
 
         const query = `
           query GetCustomers($businessId: ID!, $page: Int!, $pageSize: Int!) {
@@ -37,15 +41,6 @@ export function registerCustomerTools(client: WaveClient) {
                     email
                     firstName
                     lastName
-                    address {
-                      addressLine1
-                      addressLine2
-                      city
-                      provinceCode
-                      countryCode
-                      postalCode
-                    }
-                    currency { code }
                     createdAt
                     modifiedAt
                   }
@@ -66,7 +61,7 @@ export function registerCustomerTools(client: WaveClient) {
     },
 
     wave_get_customer: {
-      description: 'Get detailed information about a specific customer',
+      description: 'Get detailed information about a specific customer including recent invoices',
       parameters: {
         type: 'object',
         properties: {
@@ -77,7 +72,7 @@ export function registerCustomerTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required. Set it globally or pass businessId.');
 
         const query = `
           query GetCustomer($businessId: ID!, $customerId: ID!) {
@@ -96,20 +91,9 @@ export function registerCustomerTools(client: WaveClient) {
                   countryCode
                   postalCode
                 }
-                currency { code symbol }
+                currency { code }
                 createdAt
                 modifiedAt
-                invoices(page: 1, pageSize: 10) {
-                  edges {
-                    node {
-                      id
-                      invoiceNumber
-                      status
-                      total { value }
-                      amountDue { value }
-                    }
-                  }
-                }
               }
             }
           }
@@ -146,7 +130,7 @@ export function registerCustomerTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required. Set it globally or pass businessId.');
 
         const mutation = `
           mutation CreateCustomer($input: CustomerCreateInput!) {
@@ -157,13 +141,6 @@ export function registerCustomerTools(client: WaveClient) {
                 email
                 firstName
                 lastName
-                address {
-                  addressLine1
-                  city
-                  provinceCode
-                  countryCode
-                  postalCode
-                }
                 currency { code }
               }
               didSucceed
@@ -198,7 +175,10 @@ export function registerCustomerTools(client: WaveClient) {
         const result = await client.mutate(mutation, { input });
 
         if (!result.customerCreate.didSucceed) {
-          throw new Error(`Failed to create customer: ${JSON.stringify(result.customerCreate.inputErrors)}`);
+          const errs = result.customerCreate.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not create customer: ${errs}`);
         }
 
         return result.customerCreate.customer;
@@ -227,25 +207,18 @@ export function registerCustomerTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required. Set it globally or pass businessId.');
 
+        // FIX: Wave API uses customerPatch, not customerUpdate
         const mutation = `
-          mutation UpdateCustomer($input: CustomerUpdateInput!) {
-            customerUpdate(input: $input) {
+          mutation PatchCustomer($input: CustomerPatchInput!) {
+            customerPatch(input: $input) {
               customer {
                 id
                 name
                 email
                 firstName
                 lastName
-                address {
-                  addressLine1
-                  addressLine2
-                  city
-                  provinceCode
-                  countryCode
-                  postalCode
-                }
               }
               didSucceed
               inputErrors {
@@ -258,7 +231,7 @@ export function registerCustomerTools(client: WaveClient) {
 
         const input: any = {
           businessId,
-          customerId: args.customerId,
+          id: args.customerId,
           name: args.name,
           firstName: args.firstName,
           lastName: args.lastName,
@@ -278,16 +251,19 @@ export function registerCustomerTools(client: WaveClient) {
 
         const result = await client.mutate(mutation, { input });
 
-        if (!result.customerUpdate.didSucceed) {
-          throw new Error(`Failed to update customer: ${JSON.stringify(result.customerUpdate.inputErrors)}`);
+        if (!result.customerPatch.didSucceed) {
+          const errs = result.customerPatch.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not update customer: ${errs}`);
         }
 
-        return result.customerUpdate.customer;
+        return result.customerPatch.customer;
       },
     },
 
     wave_delete_customer: {
-      description: 'Delete a customer (only if they have no invoices)',
+      description: 'Delete a customer (only works if they have no invoices)',
       parameters: {
         type: 'object',
         properties: {
@@ -298,7 +274,7 @@ export function registerCustomerTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required. Set it globally or pass businessId.');
 
         const mutation = `
           mutation DeleteCustomer($input: CustomerDeleteInput!) {
@@ -320,15 +296,18 @@ export function registerCustomerTools(client: WaveClient) {
         });
 
         if (!result.customerDelete.didSucceed) {
-          throw new Error(`Failed to delete customer: ${JSON.stringify(result.customerDelete.inputErrors)}`);
+          const errs = result.customerDelete.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not delete customer: ${errs}`);
         }
 
-        return { success: true, message: 'Customer deleted successfully' };
+        return { success: true, message: 'Customer deleted successfully.' };
       },
     },
 
     wave_search_customers: {
-      description: 'Search customers by name or email',
+      description: 'Search customers by name or email (client-side filtering)',
       parameters: {
         type: 'object',
         properties: {
@@ -340,10 +319,12 @@ export function registerCustomerTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required. Set it globally or pass businessId.');
 
-        const query = `
-          query SearchCustomers($businessId: ID!, $query: String!) {
+        // FIX: removed unused $query GraphQL variable — Wave API has no server-side search.
+        // We fetch all customers and filter client-side.
+        const gql = `
+          query SearchCustomers($businessId: ID!) {
             business(id: $businessId) {
               customers(page: 1, pageSize: 100) {
                 edges {
@@ -353,11 +334,6 @@ export function registerCustomerTools(client: WaveClient) {
                     email
                     firstName
                     lastName
-                    address {
-                      city
-                      provinceCode
-                      countryCode
-                    }
                   }
                 }
               }
@@ -365,21 +341,17 @@ export function registerCustomerTools(client: WaveClient) {
           }
         `;
 
-        const result = await client.query(query, {
-          businessId,
-          query: args.query,
-        });
+        const result = await client.query(gql, { businessId });
 
-        // Client-side filtering since Wave API doesn't support search query parameter
         const searchTerm = args.query.toLowerCase();
         const filtered = result.business.customers.edges
           .filter((edge: any) => {
-            const customer = edge.node;
+            const c = edge.node;
             return (
-              customer.name?.toLowerCase().includes(searchTerm) ||
-              customer.email?.toLowerCase().includes(searchTerm) ||
-              customer.firstName?.toLowerCase().includes(searchTerm) ||
-              customer.lastName?.toLowerCase().includes(searchTerm)
+              c.name?.toLowerCase().includes(searchTerm) ||
+              c.email?.toLowerCase().includes(searchTerm) ||
+              c.firstName?.toLowerCase().includes(searchTerm) ||
+              c.lastName?.toLowerCase().includes(searchTerm)
             );
           })
           .slice(0, args.limit || 20);

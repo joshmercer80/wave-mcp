@@ -4,3 +4,6 @@ build/
 .cursor/mcp.json
 invoicing-config.json
 memories/private/
+credentials.json
+customer-aliases.json
+reconciliation-log.jsonl

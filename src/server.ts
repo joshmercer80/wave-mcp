@@ -1,5 +1,15 @@
 /**
  * Wave MCP Server Implementation
+ *
+ * Forked from NoahMcGraw/wave-mcp with fixes:
+ * - 6 mutation name corrections (customerPatch, productPatch, accountPatch, etc.)
+ * - 7 broken-tool fixes (search_customers, list_customers, get_invoice, etc.)
+ * - Bill tools removed (bill CRUD not available in Wave public API)
+ * - MCP App Resources removed (not needed for CLI use)
+ * - Retry logic with exponential backoff
+ * - Plain-English error messages
+ * - Graceful start without token
+ * - Reconciliation engine for Venmo payment matching
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -7,8 +17,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
-  ListResourcesRequestSchema,
-  ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { createWaveClient, WaveClient } from './client.js';
 import { registerInvoiceTools } from './tools/invoices-tools.js';
@@ -16,12 +24,11 @@ import { registerCustomerTools } from './tools/customers-tools.js';
 import { registerProductTools } from './tools/products-tools.js';
 import { registerAccountTools } from './tools/accounts-tools.js';
 import { registerTransactionTools } from './tools/transactions-tools.js';
-import { registerBillTools } from './tools/bills-tools.js';
 import { registerEstimateTools } from './tools/estimates-tools.js';
 import { registerTaxTools } from './tools/taxes-tools.js';
 import { registerBusinessTools } from './tools/businesses-tools.js';
 import { registerReportingTools } from './tools/reporting-tools.js';
-import { waveApps } from './apps/index.js';
+import { registerReconciliationTools } from './tools/reconciliation-tools.js';
 
 export class WaveMCPServer {
   private server: Server;
@@ -32,38 +39,33 @@ export class WaveMCPServer {
     this.server = new Server(
       {
         name: 'wave-mcp-server',
-        version: '1.0.0',
+        version: '2.0.0',
       },
       {
         capabilities: {
           tools: {},
-          resources: {},
         },
         instructions: [
-          'Wave Accounting MCP server for invoicing, payments, and receipts.',
+          'Wave Accounting MCP server for Carrie\'s cleaning business.',
+          'Manages invoices, customers, products, and payment reconciliation via Wave\'s GraphQL API.',
           '',
           'WORKING WORKFLOWS:',
           '- Invoice creation: wave_list_products -> wave_create_invoice (DRAFT) -> wave_approve_invoice -> wave_send_invoice',
-          '- Manual payment: wave_create_invoice_payment (uses invoicePaymentCreateManual mutation)',
-          '- Receipt sending: wave_send_payment_receipt (uses invoicePaymentReceiptSend mutation)',
+          '- Manual payment: wave_create_invoice_payment (invoicePaymentCreateManual mutation)',
+          '- Receipt sending: wave_send_payment_receipt (invoicePaymentReceiptSend mutation)',
+          '- Venmo reconciliation: wave_reconcile_venmo (match payments to open invoices)',
+          '- Mark invoice paid: wave_mark_invoice_paid (confirmation-gated wrapper)',
           '',
           'CONVENTIONS:',
-          '- businessId is set globally via WAVE_BUSINESS_ID env var; most tools use it automatically.',
+          '- businessId is set globally via credentials.json; most tools use it automatically.',
           '- All monetary amounts are Decimal strings (e.g. "100.00"), not numbers.',
           '- Dates use YYYY-MM-DD format.',
-          '- Product IDs from wave_list_products are valid for use in wave_create_invoice items.',
+          '- Use wave_switch_business to change the active business.',
           '',
-          'CONFIG: Check invoicing-config.json in the project root for saved workflow defaults',
-          '(customer IDs, payment account, receipt templates, per-account invoice creation params).',
-          '',
-          'KNOWN BROKEN TOOLS (do not use without fixing first):',
-          '- wave_search_customers: declares unused $query GraphQL variable, causes "Invalid query"',
-          '- wave_list_customers: invalid fields on Customer type, causes "Invalid query"',
-          '- wave_get_current_business: invalid fields, causes "Invalid query"',
-          '- wave_create_product: passes isSold/isBought which are not on ProductCreateInput',
-          '- wave_update_invoice: uses wrong mutation name (invoiceUpdate vs invoicePatch)',
-          '- wave_get_invoice: queries nonexistent "id" field on InvoiceItemTax',
-          '- wave_list_invoices: status/customerId filter params are exposed but not wired to the GraphQL query',
+          'NOTES:',
+          '- Bill tools have been removed (not available in Wave public API).',
+          '- Reporting tools (P&L, balance sheet, etc.) need schema validation with a live token.',
+          '- Transaction write tools (create, update, categorize) may not exist in the API schema.',
         ].join('\n'),
       }
     );
@@ -82,11 +84,12 @@ export class WaveMCPServer {
       registerProductTools(this.client),
       registerAccountTools(this.client),
       registerTransactionTools(this.client),
-      registerBillTools(this.client),
+      // Bill tools removed — bill CRUD not available in Wave public API
       registerEstimateTools(this.client),
       registerTaxTools(this.client),
       registerBusinessTools(this.client),
       registerReportingTools(this.client),
+      registerReconciliationTools(this.client),
     ];
 
     for (const toolSet of toolSets) {
@@ -102,7 +105,7 @@ export class WaveMCPServer {
         name,
         description: tool.description,
         inputSchema: {
-          type: 'object',
+          type: 'object' as const,
           properties: tool.parameters?.properties || {},
           required: tool.parameters?.required || [],
         },
@@ -116,7 +119,15 @@ export class WaveMCPServer {
 
       const tool = this.tools.get(name);
       if (!tool) {
-        throw new Error(`Tool not found: ${name}`);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Tool "${name}" not found. Use ListTools to see available tools.`,
+            },
+          ],
+          isError: true,
+        };
       }
 
       try {
@@ -124,7 +135,7 @@ export class WaveMCPServer {
         return {
           content: [
             {
-              type: 'text',
+              type: 'text' as const,
               text: JSON.stringify(result, null, 2),
             },
           ],
@@ -133,72 +144,13 @@ export class WaveMCPServer {
         return {
           content: [
             {
-              type: 'text',
-              text: `Error: ${error.message}`,
+              type: 'text' as const,
+              text: error.message || 'An unexpected error occurred.',
             },
           ],
           isError: true,
         };
       }
-    });
-
-    this.server.setRequestHandler(ListResourcesRequestSchema, async () => {
-      const resources = waveApps.map((app) => ({
-        uri: `wave://apps/${app.name}`,
-        name: app.displayName,
-        description: app.description,
-        mimeType: 'application/json',
-      }));
-
-      // Add dynamic resources for businesses
-      resources.push({
-        uri: 'wave://businesses',
-        name: 'Businesses',
-        description: 'List of accessible Wave businesses',
-        mimeType: 'application/json',
-      });
-
-      return { resources };
-    });
-
-    this.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-      const { uri } = request.params;
-
-      if (uri.startsWith('wave://apps/')) {
-        const appName = uri.replace('wave://apps/', '');
-        const app = waveApps.find((a) => a.name === appName);
-
-        if (!app) {
-          throw new Error(`App not found: ${appName}`);
-        }
-
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: 'application/json',
-              text: JSON.stringify(app, null, 2),
-            },
-          ],
-        };
-      }
-
-      if (uri === 'wave://businesses') {
-        const businessesTool = this.tools.get('wave_list_businesses');
-        const businesses = await businessesTool.handler({});
-
-        return {
-          contents: [
-            {
-              uri,
-              mimeType: 'application/json',
-              text: JSON.stringify(businesses, null, 2),
-            },
-          ],
-        };
-      }
-
-      throw new Error(`Resource not found: ${uri}`);
     });
   }
 
@@ -206,7 +158,6 @@ export class WaveMCPServer {
     const transport = new StdioServerTransport();
     await this.server.connect(transport);
 
-    // Handle shutdown gracefully
     process.on('SIGINT', async () => {
       await this.server.close();
       process.exit(0);

@@ -1,14 +1,20 @@
 /**
  * Wave Transaction Tools
+ *
+ * Fixes from NoahMcGraw/wave-mcp:
+ * - wave_create_transaction: changed transactionCreate -> moneyTransactionCreate
+ *
+ * NOTE: Transaction queries (list, get) and mutations (update, categorize) are
+ * NOT in the official Wave API docs. They may fail if the schema does not include
+ * them. The moneyTransactionCreate mutation IS officially documented.
  */
 
 import type { WaveClient } from '../client.js';
-import type { Transaction } from '../types/index.js';
 
 export function registerTransactionTools(client: WaveClient) {
   return {
     wave_list_transactions: {
-      description: 'List transactions for a business with filtering options',
+      description: 'List transactions for a business (may not be available in all Wave API versions)',
       parameters: {
         type: 'object',
         properties: {
@@ -22,7 +28,7 @@ export function registerTransactionTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
           query GetTransactions($businessId: ID!, $page: Int!, $pageSize: Int!) {
@@ -42,14 +48,6 @@ export function registerTransactionTools(client: WaveClient) {
                       currency { code }
                     }
                     date
-                    accountTransaction {
-                      account {
-                        id
-                        name
-                        type { name }
-                      }
-                      amount { value }
-                    }
                     createdAt
                     modifiedAt
                   }
@@ -67,17 +65,9 @@ export function registerTransactionTools(client: WaveClient) {
 
         let transactions = result.business.transactions.edges.map((e: any) => e.node);
 
-        // Client-side filtering
-        if (args.accountId) {
-          transactions = transactions.filter((t: any) => 
-            t.accountTransaction?.account?.id === args.accountId
-          );
-        }
-
         if (args.startDate) {
           transactions = transactions.filter((t: any) => t.date >= args.startDate);
         }
-
         if (args.endDate) {
           transactions = transactions.filter((t: any) => t.date <= args.endDate);
         }
@@ -101,7 +91,7 @@ export function registerTransactionTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
           query GetTransaction($businessId: ID!, $transactionId: ID!) {
@@ -111,17 +101,9 @@ export function registerTransactionTools(client: WaveClient) {
                 description
                 amount {
                   value
-                  currency { code symbol }
+                  currency { code }
                 }
                 date
-                accountTransaction {
-                  account {
-                    id
-                    name
-                    type { name }
-                  }
-                  amount { value }
-                }
                 createdAt
                 modifiedAt
               }
@@ -139,39 +121,50 @@ export function registerTransactionTools(client: WaveClient) {
     },
 
     wave_create_transaction: {
-      description: 'Create a new transaction',
+      description: 'Create a money transaction (income or expense entry)',
       parameters: {
         type: 'object',
         properties: {
           businessId: { type: 'string', description: 'Business ID' },
+          externalId: { type: 'string', description: 'External reference ID for deduplication' },
           description: { type: 'string', description: 'Transaction description' },
           date: { type: 'string', description: 'Transaction date (YYYY-MM-DD)' },
-          amount: { type: 'string', description: 'Transaction amount' },
-          accountId: { type: 'string', description: 'Account ID for categorization' },
+          anchor: {
+            type: 'object',
+            description: 'The anchor account and amount',
+            properties: {
+              accountId: { type: 'string', description: 'Account ID' },
+              amount: { type: 'string', description: 'Transaction amount' },
+              direction: { type: 'string', enum: ['DEPOSIT', 'WITHDRAWAL'], description: 'Direction' },
+            },
+            required: ['accountId', 'amount', 'direction'],
+          },
+          lineItems: {
+            type: 'array',
+            description: 'Line items for categorization',
+            items: {
+              type: 'object',
+              properties: {
+                accountId: { type: 'string', description: 'Account ID' },
+                amount: { type: 'string', description: 'Amount' },
+                description: { type: 'string', description: 'Line description' },
+              },
+              required: ['accountId', 'amount'],
+            },
+          },
         },
-        required: ['description', 'date', 'amount', 'accountId'],
+        required: ['description', 'date', 'anchor', 'lineItems'],
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
+        // FIX: Wave API uses moneyTransactionCreate, not transactionCreate
         const mutation = `
-          mutation CreateTransaction($input: TransactionCreateInput!) {
-            transactionCreate(input: $input) {
+          mutation CreateMoneyTransaction($input: MoneyTransactionCreateInput!) {
+            moneyTransactionCreate(input: $input) {
               transaction {
                 id
-                description
-                amount {
-                  value
-                  currency { code }
-                }
-                date
-                accountTransaction {
-                  account {
-                    id
-                    name
-                  }
-                }
               }
               didSucceed
               inputErrors {
@@ -185,162 +178,22 @@ export function registerTransactionTools(client: WaveClient) {
         const result = await client.mutate(mutation, {
           input: {
             businessId,
+            externalId: args.externalId || `mcp-${Date.now()}`,
             description: args.description,
             date: args.date,
-            amount: args.amount,
-            accountId: args.accountId,
+            anchor: args.anchor,
+            lineItems: args.lineItems,
           },
         });
 
-        if (!result.transactionCreate.didSucceed) {
-          throw new Error(`Failed to create transaction: ${JSON.stringify(result.transactionCreate.inputErrors)}`);
+        if (!result.moneyTransactionCreate.didSucceed) {
+          const errs = result.moneyTransactionCreate.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not create transaction: ${errs}`);
         }
 
-        return result.transactionCreate.transaction;
-      },
-    },
-
-    wave_update_transaction: {
-      description: 'Update an existing transaction',
-      parameters: {
-        type: 'object',
-        properties: {
-          businessId: { type: 'string', description: 'Business ID' },
-          transactionId: { type: 'string', description: 'Transaction ID' },
-          description: { type: 'string', description: 'Transaction description' },
-          date: { type: 'string', description: 'Transaction date (YYYY-MM-DD)' },
-        },
-        required: ['transactionId'],
-      },
-      handler: async (args: any) => {
-        const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
-
-        const mutation = `
-          mutation UpdateTransaction($input: TransactionUpdateInput!) {
-            transactionUpdate(input: $input) {
-              transaction {
-                id
-                description
-                date
-              }
-              didSucceed
-              inputErrors {
-                message
-                path
-              }
-            }
-          }
-        `;
-
-        const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            transactionId: args.transactionId,
-            description: args.description,
-            date: args.date,
-          },
-        });
-
-        if (!result.transactionUpdate.didSucceed) {
-          throw new Error(`Failed to update transaction: ${JSON.stringify(result.transactionUpdate.inputErrors)}`);
-        }
-
-        return result.transactionUpdate.transaction;
-      },
-    },
-
-    wave_categorize_transaction: {
-      description: 'Categorize/recategorize a transaction to a different account',
-      parameters: {
-        type: 'object',
-        properties: {
-          businessId: { type: 'string', description: 'Business ID' },
-          transactionId: { type: 'string', description: 'Transaction ID' },
-          accountId: { type: 'string', description: 'New account ID for categorization' },
-        },
-        required: ['transactionId', 'accountId'],
-      },
-      handler: async (args: any) => {
-        const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
-
-        const mutation = `
-          mutation CategorizeTransaction($input: TransactionCategorizeInput!) {
-            transactionCategorize(input: $input) {
-              transaction {
-                id
-                accountTransaction {
-                  account {
-                    id
-                    name
-                    type { name }
-                  }
-                }
-              }
-              didSucceed
-              inputErrors {
-                message
-                path
-              }
-            }
-          }
-        `;
-
-        const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            transactionId: args.transactionId,
-            accountId: args.accountId,
-          },
-        });
-
-        if (!result.transactionCategorize.didSucceed) {
-          throw new Error(`Failed to categorize transaction: ${JSON.stringify(result.transactionCategorize.inputErrors)}`);
-        }
-
-        return result.transactionCategorize.transaction;
-      },
-    },
-
-    wave_list_transaction_attachments: {
-      description: 'List attachments (receipts, documents) for a transaction',
-      parameters: {
-        type: 'object',
-        properties: {
-          businessId: { type: 'string', description: 'Business ID' },
-          transactionId: { type: 'string', description: 'Transaction ID' },
-        },
-        required: ['transactionId'],
-      },
-      handler: async (args: any) => {
-        const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
-
-        const query = `
-          query GetTransactionAttachments($businessId: ID!, $transactionId: ID!) {
-            business(id: $businessId) {
-              transaction(id: $transactionId) {
-                id
-                attachments {
-                  id
-                  filename
-                  url
-                  mimeType
-                  size
-                  createdAt
-                }
-              }
-            }
-          }
-        `;
-
-        const result = await client.query(query, {
-          businessId,
-          transactionId: args.transactionId,
-        });
-
-        return result.business.transaction.attachments;
+        return result.moneyTransactionCreate.transaction;
       },
     },
   };

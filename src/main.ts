@@ -2,37 +2,85 @@
 
 /**
  * Wave MCP Server Entry Point
+ *
+ * Reads credentials from:
+ *   1. ~/.wave-mcp/credentials.json  (preferred — chmod 600)
+ *   2. WAVE_ACCESS_TOKEN / WAVE_BUSINESS_ID env vars (fallback)
+ *
+ * If no token is found the server still starts; every tool call returns a
+ * helpful message explaining how to configure credentials.
  */
 
+import { readFileSync, existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
 import { WaveMCPServer } from './server.js';
 
+interface Credentials {
+  accessToken?: string;
+  businessId?: string;
+}
+
+function loadCredentials(): Credentials {
+  const credPath = join(homedir(), '.wave-mcp', 'credentials.json');
+
+  // Try credentials file first
+  if (existsSync(credPath)) {
+    try {
+      const raw = readFileSync(credPath, 'utf-8');
+      const parsed = JSON.parse(raw);
+      if (parsed.accessToken) {
+        console.error(`Loaded Wave credentials from ${credPath}`);
+        return {
+          accessToken: parsed.accessToken,
+          businessId: parsed.businessId,
+        };
+      }
+    } catch (err: any) {
+      console.error(`Warning: Could not read ${credPath}: ${err.message}`);
+    }
+  }
+
+  // Fall back to env vars
+  if (process.env.WAVE_ACCESS_TOKEN) {
+    console.error('Using Wave credentials from environment variables.');
+    return {
+      accessToken: process.env.WAVE_ACCESS_TOKEN,
+      businessId: process.env.WAVE_BUSINESS_ID,
+    };
+  }
+
+  return {};
+}
+
 async function main() {
-  const accessToken = process.env.WAVE_ACCESS_TOKEN;
-  const businessId = process.env.WAVE_BUSINESS_ID;
+  const creds = loadCredentials();
 
-  if (!accessToken) {
-    console.error('Error: WAVE_ACCESS_TOKEN environment variable is required');
+  const server = new WaveMCPServer(creds.accessToken || '', creds.businessId);
+
+  if (!creds.accessToken) {
     console.error('');
-    console.error('To get your Wave access token:');
-    console.error('1. Go to https://developer.waveapps.com/');
-    console.error('2. Create an application or use an existing one');
-    console.error('3. Generate an OAuth2 access token');
-    console.error('4. Set WAVE_ACCESS_TOKEN environment variable');
+    console.error('============================================================');
+    console.error('  Wave token not configured. The server is running but all');
+    console.error('  tool calls will return an error until you add credentials.');
     console.error('');
-    console.error('Example usage:');
-    console.error('  WAVE_ACCESS_TOKEN=your_token wave-mcp');
-    console.error('  WAVE_ACCESS_TOKEN=your_token WAVE_BUSINESS_ID=business_id wave-mcp');
-    process.exit(1);
+    console.error('  To connect:');
+    console.error('    1. Go to https://developer-apps.waveapps.com/apps/create/');
+    console.error('    2. Create an app and generate a Full Access Token');
+    console.error('    3. Save to ~/.wave-mcp/credentials.json:');
+    console.error('       { "accessToken": "YOUR_TOKEN", "businessId": "YOUR_BIZ_ID" }');
+    console.error('    4. chmod 600 ~/.wave-mcp/credentials.json');
+    console.error('    5. Restart the server');
+    console.error('============================================================');
+    console.error('');
+  } else {
+    console.error('Wave MCP Server starting...');
+    if (creds.businessId) {
+      console.error(`Default business ID: ${creds.businessId}`);
+    }
   }
 
-  const server = new WaveMCPServer(accessToken, businessId);
-
-  console.error('Wave MCP Server starting...');
-  if (businessId) {
-    console.error(`Default business ID: ${businessId}`);
-  }
   console.error('Server ready. Awaiting requests...');
-
   await server.run();
 }
 

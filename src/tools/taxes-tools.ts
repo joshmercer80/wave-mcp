@@ -1,9 +1,11 @@
 /**
  * Wave Tax Tools
+ *
+ * Fixes from NoahMcGraw/wave-mcp:
+ * - wave_create_tax: changed taxCreate -> salesTaxCreate (correct API mutation name)
  */
 
 import type { WaveClient } from '../client.js';
-import type { Tax } from '../types/index.js';
 
 export function registerTaxTools(client: WaveClient) {
   return {
@@ -18,7 +20,7 @@ export function registerTaxTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
           query GetTaxes($businessId: ID!) {
@@ -38,7 +40,6 @@ export function registerTaxTools(client: WaveClient) {
         const result = await client.query(query, { businessId });
 
         let taxes = result.business.taxes;
-
         if (args.isArchived === false) {
           taxes = taxes.filter((t: any) => !t.isArchived);
         }
@@ -59,7 +60,7 @@ export function registerTaxTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
           query GetTax($businessId: ID!, $taxId: ID!) {
@@ -100,12 +101,13 @@ export function registerTaxTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
+        // FIX: Wave API uses salesTaxCreate, not taxCreate
         const mutation = `
-          mutation CreateTax($input: TaxCreateInput!) {
-            taxCreate(input: $input) {
-              tax {
+          mutation CreateSalesTax($input: SalesTaxCreateInput!) {
+            salesTaxCreate(input: $input) {
+              salesTax {
                 id
                 name
                 abbreviation
@@ -131,11 +133,14 @@ export function registerTaxTools(client: WaveClient) {
           },
         });
 
-        if (!result.taxCreate.didSucceed) {
-          throw new Error(`Failed to create tax: ${JSON.stringify(result.taxCreate.inputErrors)}`);
+        if (!result.salesTaxCreate.didSucceed) {
+          const errs = result.salesTaxCreate.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not create tax: ${errs}`);
         }
 
-        return result.taxCreate.tax;
+        return result.salesTaxCreate.salesTax;
       },
     },
   };

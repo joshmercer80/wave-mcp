@@ -1,9 +1,10 @@
 /**
  * Wave Business Tools
+ *
+ * Added wave_switch_business for changing the active business context.
  */
 
 import type { WaveClient } from '../client.js';
-import type { Business } from '../types/index.js';
 
 export function registerBusinessTools(client: WaveClient) {
   return {
@@ -13,7 +14,7 @@ export function registerBusinessTools(client: WaveClient) {
         type: 'object',
         properties: {},
       },
-      handler: async (args: any) => {
+      handler: async (_args: any) => {
         const query = `
           query ListBusinesses($page: Int!, $pageSize: Int!) {
             businesses(page: $page, pageSize: $pageSize) {
@@ -32,7 +33,6 @@ export function registerBusinessTools(client: WaveClient) {
         `;
 
         const result = await client.query(query, { page: 1, pageSize: 50 });
-
         return result.businesses.edges.map((e: any) => e.node);
       },
     },
@@ -78,15 +78,17 @@ export function registerBusinessTools(client: WaveClient) {
     },
 
     wave_get_current_business: {
-      description: 'Get the currently active business (if businessId is set globally)',
+      description: 'Get the currently active business (based on global businessId)',
       parameters: {
         type: 'object',
         properties: {},
       },
-      handler: async (args: any) => {
+      handler: async (_args: any) => {
         const businessId = client.getBusinessId();
         if (!businessId) {
-          throw new Error('No business ID set. Use wave_list_businesses to see available businesses.');
+          throw new Error(
+            'No business ID set. Use wave_list_businesses to see available businesses, then wave_switch_business to select one.'
+          );
         }
 
         const query = `
@@ -112,8 +114,48 @@ export function registerBusinessTools(client: WaveClient) {
         `;
 
         const result = await client.query(query, { businessId });
-
         return result.business;
+      },
+    },
+
+    wave_switch_business: {
+      description: 'Switch the active business context (similar to QBO switch_company)',
+      parameters: {
+        type: 'object',
+        properties: {
+          businessId: { type: 'string', description: 'Business ID to switch to' },
+        },
+        required: ['businessId'],
+      },
+      handler: async (args: any) => {
+        // Validate the business exists by querying it
+        const query = `
+          query GetBusiness($businessId: ID!) {
+            business(id: $businessId) {
+              id
+              name
+              currency { code }
+            }
+          }
+        `;
+
+        const result = await client.query(query, {
+          businessId: args.businessId,
+        });
+
+        if (!result.business) {
+          throw new Error(
+            `Business ${args.businessId} not found. Use wave_list_businesses to see available businesses.`
+          );
+        }
+
+        client.setBusinessId(args.businessId);
+
+        return {
+          success: true,
+          message: `Switched to business: ${result.business.name}`,
+          business: result.business,
+        };
       },
     },
   };

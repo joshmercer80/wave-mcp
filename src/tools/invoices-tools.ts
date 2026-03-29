@@ -1,22 +1,26 @@
 /**
  * Wave Invoice Tools
+ *
+ * Fixes from NoahMcGraw/wave-mcp:
+ * - wave_get_invoice: removed nonexistent "id" field from InvoiceItemTax
+ * - wave_list_invoices: wired status/customerId filters (client-side)
+ * - wave_update_invoice: changed invoiceUpdate -> invoicePatch (correct API mutation name)
  */
 
 import type { WaveClient } from '../client.js';
-import type { Invoice, InvoiceItem } from '../types/index.js';
 
 export function registerInvoiceTools(client: WaveClient) {
   return {
     wave_list_invoices: {
-      description: 'List invoices for a business with optional filtering',
+      description: 'List invoices for a business with optional status and customer filtering',
       parameters: {
         type: 'object',
         properties: {
           businessId: { type: 'string', description: 'Business ID (required if not set globally)' },
-          status: { 
-            type: 'string', 
+          status: {
+            type: 'string',
             enum: ['DRAFT', 'SENT', 'VIEWED', 'PAID', 'PARTIAL', 'OVERDUE', 'APPROVED'],
-            description: 'Filter by invoice status' 
+            description: 'Filter by invoice status',
           },
           customerId: { type: 'string', description: 'Filter by customer ID' },
           page: { type: 'number', description: 'Page number (default: 1)' },
@@ -25,7 +29,7 @@ export function registerInvoiceTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required. Set it globally or pass businessId.');
 
         const query = `
           query GetInvoices($businessId: ID!, $page: Int!, $pageSize: Int!) {
@@ -74,7 +78,22 @@ export function registerInvoiceTools(client: WaveClient) {
           pageSize: Math.min(args.pageSize || 20, 100),
         });
 
-        return result.business.invoices;
+        // FIX: Wire status and customerId filters (client-side since Wave API
+        // does not support server-side filtering on these fields)
+        let edges = result.business.invoices.edges;
+
+        if (args.status) {
+          edges = edges.filter((e: any) => e.node.status === args.status);
+        }
+
+        if (args.customerId) {
+          edges = edges.filter((e: any) => e.node.customer?.id === args.customerId);
+        }
+
+        return {
+          pageInfo: result.business.invoices.pageInfo,
+          edges,
+        };
       },
     },
 
@@ -90,8 +109,10 @@ export function registerInvoiceTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required. Set it globally or pass businessId.');
 
+        // FIX: removed "id" from taxes selection — InvoiceItemTax type does not
+        // have an "id" field in the Wave API schema.
         const query = `
           query GetInvoice($businessId: ID!, $invoiceId: ID!) {
             business(id: $businessId) {
@@ -121,14 +142,13 @@ export function registerInvoiceTools(client: WaveClient) {
                     name
                   }
                   taxes {
-                    id
                     name
                     rate
                   }
                 }
                 total {
                   value
-                  currency { code symbol }
+                  currency { code }
                 }
                 amountDue {
                   value
@@ -156,7 +176,7 @@ export function registerInvoiceTools(client: WaveClient) {
     },
 
     wave_create_invoice: {
-      description: 'Create a new invoice',
+      description: 'Create a new invoice (defaults to DRAFT status)',
       parameters: {
         type: 'object',
         properties: {
@@ -168,15 +188,15 @@ export function registerInvoiceTools(client: WaveClient) {
             description: 'Invoice status (default: DRAFT)',
           },
           currency: { type: 'string', description: 'Currency code (e.g. USD). Defaults to business currency' },
-          title: { type: 'string', description: 'Invoice title. Defaults to business setting' },
-          subhead: { type: 'string', description: 'Invoice subheading text. Defaults to business setting' },
+          title: { type: 'string', description: 'Invoice title' },
+          subhead: { type: 'string', description: 'Invoice subheading text' },
           invoiceNumber: { type: 'string', description: 'Invoice number. Auto-increments if not provided' },
-          poNumber: { type: 'string', description: 'Purchase order or sales order number' },
+          poNumber: { type: 'string', description: 'Purchase order number' },
           invoiceDate: { type: 'string', description: 'Invoice date (YYYY-MM-DD). Defaults to today' },
-          exchangeRate: { type: 'string', description: 'Exchange rate to business currency from invoice currency' },
-          dueDate: { type: 'string', description: 'Due date (YYYY-MM-DD). Defaults per business payment terms' },
-          memo: { type: 'string', description: 'Invoice memo/notes. Defaults to business setting' },
-          footer: { type: 'string', description: 'Invoice footer text. Defaults to business setting' },
+          exchangeRate: { type: 'string', description: 'Exchange rate to business currency' },
+          dueDate: { type: 'string', description: 'Due date (YYYY-MM-DD)' },
+          memo: { type: 'string', description: 'Invoice memo/notes' },
+          footer: { type: 'string', description: 'Invoice footer text' },
           items: {
             type: 'array',
             description: 'Invoice line items',
@@ -202,39 +222,12 @@ export function registerInvoiceTools(client: WaveClient) {
               required: ['productId'],
             },
           },
-          discounts: {
-            type: 'array',
-            description: 'Invoice discounts (max 1)',
-            items: {
-              type: 'object',
-              properties: {
-                name: { type: 'string', description: 'Discount name' },
-                discountType: { type: 'string', enum: ['FIXED', 'PERCENTAGE'], description: 'Discount type' },
-                amount: { type: 'string', description: 'Discount amount (for FIXED type)' },
-                percentage: { type: 'string', description: 'Discount percentage (for PERCENTAGE type)' },
-              },
-              required: ['discountType'],
-            },
-          },
-          disableAmexPayments: { type: 'boolean', description: 'Disable American Express payments for this invoice' },
-          disableCreditCardPayments: { type: 'boolean', description: 'Disable credit card payments for this invoice' },
-          disableBankPayments: { type: 'boolean', description: 'Disable bank payments for this invoice' },
-          itemTitle: { type: 'string', description: 'Label for the Item column' },
-          unitTitle: { type: 'string', description: 'Label for the Unit column' },
-          priceTitle: { type: 'string', description: 'Label for the Price column' },
-          amountTitle: { type: 'string', description: 'Label for the Amount column' },
-          hideName: { type: 'boolean', description: 'Hide product name in line items' },
-          hideDescription: { type: 'boolean', description: 'Hide description in line items' },
-          hideUnit: { type: 'boolean', description: 'Hide unit in line items' },
-          hidePrice: { type: 'boolean', description: 'Hide price in line items' },
-          hideAmount: { type: 'boolean', description: 'Hide amount in line items' },
-          requireTermsOfServiceAgreement: { type: 'boolean', description: 'Require customer to accept terms of service' },
         },
         required: ['customerId'],
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required. Set it globally or pass businessId.');
 
         const mutation = `
           mutation CreateInvoice($input: InvoiceCreateInput!) {
@@ -264,28 +257,20 @@ export function registerInvoiceTools(client: WaveClient) {
         const optionalStrings = [
           'status', 'currency', 'title', 'subhead', 'invoiceNumber', 'poNumber',
           'invoiceDate', 'exchangeRate', 'dueDate', 'memo', 'footer',
-          'itemTitle', 'unitTitle', 'priceTitle', 'amountTitle',
         ];
         for (const key of optionalStrings) {
           if (args[key] !== undefined) input[key] = args[key];
         }
 
-        const optionalBooleans = [
-          'disableAmexPayments', 'disableCreditCardPayments', 'disableBankPayments',
-          'hideName', 'hideDescription', 'hideUnit', 'hidePrice', 'hideAmount',
-          'requireTermsOfServiceAgreement',
-        ];
-        for (const key of optionalBooleans) {
-          if (args[key] !== undefined) input[key] = args[key];
-        }
-
         if (args.items) input.items = args.items;
-        if (args.discounts) input.discounts = args.discounts;
 
         const result = await client.mutate(mutation, { input });
 
         if (!result.invoiceCreate.didSucceed) {
-          throw new Error(`Failed to create invoice: ${JSON.stringify(result.invoiceCreate.inputErrors)}`);
+          const errs = result.invoiceCreate.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not create invoice: ${errs}`);
         }
 
         return result.invoiceCreate.invoice;
@@ -293,7 +278,7 @@ export function registerInvoiceTools(client: WaveClient) {
     },
 
     wave_update_invoice: {
-      description: 'Update an existing invoice',
+      description: 'Update an existing invoice (title, footer, memo, due date)',
       parameters: {
         type: 'object',
         properties: {
@@ -309,11 +294,12 @@ export function registerInvoiceTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required. Set it globally or pass businessId.');
 
+        // FIX: Wave API uses invoicePatch, not invoiceUpdate
         const mutation = `
-          mutation UpdateInvoice($input: InvoiceUpdateInput!) {
-            invoiceUpdate(input: $input) {
+          mutation PatchInvoice($input: InvoicePatchInput!) {
+            invoicePatch(input: $input) {
               invoice {
                 id
                 invoiceNumber
@@ -333,23 +319,26 @@ export function registerInvoiceTools(client: WaveClient) {
           }
         `;
 
-        const input = {
+        const input: any = {
           businessId,
           invoiceId: args.invoiceId,
-          title: args.title,
-          subhead: args.subhead,
-          footer: args.footer,
-          memo: args.memo,
-          dueDate: args.dueDate,
         };
+        if (args.title !== undefined) input.title = args.title;
+        if (args.subhead !== undefined) input.subhead = args.subhead;
+        if (args.footer !== undefined) input.footer = args.footer;
+        if (args.memo !== undefined) input.memo = args.memo;
+        if (args.dueDate !== undefined) input.dueDate = args.dueDate;
 
         const result = await client.mutate(mutation, { input });
 
-        if (!result.invoiceUpdate.didSucceed) {
-          throw new Error(`Failed to update invoice: ${JSON.stringify(result.invoiceUpdate.inputErrors)}`);
+        if (!result.invoicePatch.didSucceed) {
+          const errs = result.invoicePatch.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not update invoice: ${errs}`);
         }
 
-        return result.invoiceUpdate.invoice;
+        return result.invoicePatch.invoice;
       },
     },
 
@@ -376,16 +365,17 @@ export function registerInvoiceTools(client: WaveClient) {
         `;
 
         const result = await client.mutate(mutation, {
-          input: {
-            invoiceId: args.invoiceId,
-          },
+          input: { invoiceId: args.invoiceId },
         });
 
         if (!result.invoiceDelete.didSucceed) {
-          throw new Error(`Failed to delete invoice: ${JSON.stringify(result.invoiceDelete.inputErrors)}`);
+          const errs = result.invoiceDelete.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not delete invoice: ${errs}`);
         }
 
-        return { success: true, message: 'Invoice deleted successfully' };
+        return { success: true, message: 'Invoice deleted.' };
       },
     },
 
@@ -399,7 +389,7 @@ export function registerInvoiceTools(client: WaveClient) {
           subject: { type: 'string', description: 'Email subject' },
           message: { type: 'string', description: 'Email message body' },
           attachPDF: { type: 'boolean', description: 'Attach invoice PDF to the email' },
-          fromAddress: { type: 'string', description: 'Email address the invoice is sent from' },
+          fromAddress: { type: 'string', description: 'From email address' },
           ccMyself: { type: 'boolean', description: 'CC yourself on the email' },
         },
         required: ['invoiceId', 'to', 'attachPDF'],
@@ -422,7 +412,6 @@ export function registerInvoiceTools(client: WaveClient) {
           to: args.to,
           attachPDF: args.attachPDF,
         };
-
         if (args.subject) input.subject = args.subject;
         if (args.message) input.message = args.message;
         if (args.fromAddress) input.fromAddress = args.fromAddress;
@@ -431,15 +420,18 @@ export function registerInvoiceTools(client: WaveClient) {
         const result = await client.mutate(mutation, { input });
 
         if (!result.invoiceSend.didSucceed) {
-          throw new Error(`Failed to send invoice: ${JSON.stringify(result.invoiceSend.inputErrors)}`);
+          const errs = result.invoiceSend.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not send invoice: ${errs}`);
         }
 
-        return { success: true, message: 'Invoice sent successfully' };
+        return { success: true, message: 'Invoice sent.' };
       },
     },
 
     wave_approve_invoice: {
-      description: 'Approve a draft invoice',
+      description: 'Approve a draft invoice (transitions from DRAFT to APPROVED)',
       parameters: {
         type: 'object',
         properties: {
@@ -465,13 +457,14 @@ export function registerInvoiceTools(client: WaveClient) {
         `;
 
         const result = await client.mutate(mutation, {
-          input: {
-            invoiceId: args.invoiceId,
-          },
+          input: { invoiceId: args.invoiceId },
         });
 
         if (!result.invoiceApprove.didSucceed) {
-          throw new Error(`Failed to approve invoice: ${JSON.stringify(result.invoiceApprove.inputErrors)}`);
+          const errs = result.invoiceApprove.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not approve invoice: ${errs}`);
         }
 
         return result.invoiceApprove.invoice;
@@ -490,7 +483,7 @@ export function registerInvoiceTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const mutation = `
           mutation MarkInvoiceSent($input: InvoiceMarkSentInput!) {
@@ -509,14 +502,14 @@ export function registerInvoiceTools(client: WaveClient) {
         `;
 
         const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            invoiceId: args.invoiceId,
-          },
+          input: { businessId, invoiceId: args.invoiceId },
         });
 
         if (!result.invoiceMarkSent.didSucceed) {
-          throw new Error(`Failed to mark invoice sent: ${JSON.stringify(result.invoiceMarkSent.inputErrors)}`);
+          const errs = result.invoiceMarkSent.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not mark invoice as sent: ${errs}`);
         }
 
         return result.invoiceMarkSent.invoice;
@@ -535,7 +528,7 @@ export function registerInvoiceTools(client: WaveClient) {
       },
       handler: async (args: any) => {
         const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
+        if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
           query GetInvoicePayments($businessId: ID!, $invoiceId: ID!) {
@@ -548,9 +541,9 @@ export function registerInvoiceTools(client: WaveClient) {
                     value
                     currency { code }
                   }
-                  date
-                  source
-                  createdAt
+                  paymentDate
+                  paymentMethod
+                  memo
                 }
               }
             }
@@ -567,7 +560,7 @@ export function registerInvoiceTools(client: WaveClient) {
     },
 
     wave_create_invoice_payment: {
-      description: 'Record a manual payment received for an invoice',
+      description: 'Record a manual payment received for an invoice (uses invoicePaymentCreateManual)',
       parameters: {
         type: 'object',
         properties: {
@@ -580,7 +573,7 @@ export function registerInvoiceTools(client: WaveClient) {
             enum: ['BANK_TRANSFER', 'CASH', 'CHEQUE', 'CREDIT_CARD', 'OTHER', 'PAYPAL', 'UNSPECIFIED'],
             description: 'Payment method',
           },
-          exchangeRate: { type: 'string', description: 'Exchange rate (default: "1", only needed for cross-currency)' },
+          exchangeRate: { type: 'string', description: 'Exchange rate (default: "1")' },
           memo: { type: 'string', description: 'Payment notes/memo' },
         },
         required: ['invoiceId', 'paymentAccountId', 'amount', 'paymentDate', 'paymentMethod'],
@@ -613,15 +606,15 @@ export function registerInvoiceTools(client: WaveClient) {
           paymentMethod: args.paymentMethod,
           exchangeRate: args.exchangeRate || '1',
         };
-
-        if (args.memo) {
-          input.memo = args.memo;
-        }
+        if (args.memo) input.memo = args.memo;
 
         const result = await client.mutate(mutation, { input });
 
         if (!result.invoicePaymentCreateManual.didSucceed) {
-          throw new Error(`Failed to create payment: ${JSON.stringify(result.invoicePaymentCreateManual.inputErrors)}`);
+          const errs = result.invoicePaymentCreateManual.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not record payment: ${errs}`);
         }
 
         return result.invoicePaymentCreateManual.invoicePayment;
@@ -640,7 +633,7 @@ export function registerInvoiceTools(client: WaveClient) {
           message: { type: 'string', description: 'Email message body' },
           attachPdf: { type: 'boolean', description: 'Attach invoice PDF (default: false)' },
           ccMyself: { type: 'boolean', description: 'CC yourself on the email' },
-          fromAddress: { type: 'string', description: 'The email address the receipt is sent from' },
+          fromAddress: { type: 'string', description: 'From email address' },
         },
         required: ['invoiceId', 'invoicePaymentId', 'to'],
       },
@@ -662,7 +655,6 @@ export function registerInvoiceTools(client: WaveClient) {
           invoicePaymentId: args.invoicePaymentId,
           to: args.to,
         };
-
         if (args.subject) input.subject = args.subject;
         if (args.message) input.message = args.message;
         if (args.attachPdf !== undefined) input.attachPdf = args.attachPdf;
@@ -672,10 +664,13 @@ export function registerInvoiceTools(client: WaveClient) {
         const result = await client.mutate(mutation, { input });
 
         if (!result.invoicePaymentReceiptSend.didSucceed) {
-          throw new Error(`Failed to send receipt: ${JSON.stringify(result.invoicePaymentReceiptSend.inputErrors)}`);
+          const errs = result.invoicePaymentReceiptSend.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not send receipt: ${errs}`);
         }
 
-        return { success: true, message: 'Payment receipt sent successfully' };
+        return { success: true, message: 'Payment receipt sent.' };
       },
     },
   };
