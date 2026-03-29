@@ -79,7 +79,7 @@ export class WaveClient {
     return this.tokenConfigured;
   }
 
-  private async requestWithRetry<T>(gql: string, variables?: any): Promise<T> {
+  private async requestWithRetry<T>(gql: string, variables?: any, isMutation = false): Promise<T> {
     if (!this.tokenConfigured) {
       throw new WaveError(
         'Wave token not configured. Add your Full Access Token to ~/.wave-mcp/credentials.json and restart the server.'
@@ -97,10 +97,21 @@ export class WaveClient {
         const isRateLimit = status === 429;
         const isServerError = status && status >= 500;
 
-        if ((isRateLimit || isServerError) && attempt < MAX_RETRIES) {
+        // Always retry rate limits. Only retry server errors for queries —
+        // retrying non-idempotent mutations after 5xx risks duplicate financial actions.
+        if (isRateLimit && attempt < MAX_RETRIES) {
           const delay = BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 500;
           console.error(
-            `Wave API ${isRateLimit ? 'rate limit' : 'server error'} (attempt ${attempt + 1}/${MAX_RETRIES + 1}). Retrying in ${Math.round(delay)}ms...`
+            `Wave API rate limit (attempt ${attempt + 1}/${MAX_RETRIES + 1}). Retrying in ${Math.round(delay)}ms...`
+          );
+          await sleep(delay);
+          continue;
+        }
+
+        if (!isMutation && isServerError && attempt < MAX_RETRIES) {
+          const delay = BASE_DELAY_MS * Math.pow(2, attempt) + Math.random() * 500;
+          console.error(
+            `Wave API server error (attempt ${attempt + 1}/${MAX_RETRIES + 1}). Retrying in ${Math.round(delay)}ms...`
           );
           await sleep(delay);
           continue;
@@ -118,7 +129,8 @@ export class WaveClient {
   }
 
   async mutate<T = any>(mutation: string, variables?: any): Promise<T> {
-    return this.requestWithRetry<T>(mutation, variables);
+    // Mutations only retry on 429 (rate limit), never on 5xx
+    return this.requestWithRetry<T>(mutation, variables, true);
   }
 
   getBusinessId(): string | undefined {
