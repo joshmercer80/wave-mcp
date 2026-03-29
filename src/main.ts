@@ -11,7 +11,7 @@
  * helpful message explaining how to configure credentials.
  */
 
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { WaveMCPServer } from './server.js';
@@ -26,18 +26,27 @@ function loadCredentials(): Credentials {
 
   // Try credentials file first
   if (existsSync(credPath)) {
+    // Check file permissions
+    try {
+      const stats = statSync(credPath);
+      const mode = stats.mode & 0o777;
+      if (mode & 0o077) {
+        console.error(`Warning: ${credPath} has permissions ${mode.toString(8)} — should be 600. Other users may be able to read your token.`);
+      }
+    } catch {}
+
     try {
       const raw = readFileSync(credPath, 'utf-8');
       const parsed = JSON.parse(raw);
       if (parsed.accessToken) {
-        console.error(`Loaded Wave credentials from ${credPath}`);
+        console.error('Loaded Wave credentials from file.');
         return {
           accessToken: parsed.accessToken,
           businessId: parsed.businessId,
         };
       }
     } catch (err: any) {
-      console.error(`Warning: Could not read ${credPath}: ${err.message}`);
+      console.error(`Warning: Could not read credentials file: ${err.message}`);
     }
   }
 

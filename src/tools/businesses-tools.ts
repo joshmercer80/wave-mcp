@@ -119,7 +119,7 @@ export function registerBusinessTools(client: WaveClient) {
     },
 
     wave_switch_business: {
-      description: 'Switch the active business context (similar to QBO switch_company)',
+      description: 'Switch the active business context for this session (session-only — reverts to credentials.json default on restart)',
       parameters: {
         type: 'object',
         properties: {

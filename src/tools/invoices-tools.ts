@@ -321,7 +321,7 @@ export function registerInvoiceTools(client: WaveClient) {
 
         const input: any = {
           businessId,
-          invoiceId: args.invoiceId,
+          id: args.invoiceId,
         };
         if (args.title !== undefined) input.title = args.title;
         if (args.subhead !== undefined) input.subhead = args.subhead;
@@ -347,11 +347,15 @@ export function registerInvoiceTools(client: WaveClient) {
       parameters: {
         type: 'object',
         properties: {
+          businessId: { type: 'string', description: 'Business ID' },
           invoiceId: { type: 'string', description: 'Invoice ID' },
         },
         required: ['invoiceId'],
       },
       handler: async (args: any) => {
+        const businessId = args.businessId || client.getBusinessId();
+        if (!businessId) throw new Error('Business ID is required.');
+
         const mutation = `
           mutation DeleteInvoice($input: InvoiceDeleteInput!) {
             invoiceDelete(input: $input) {
@@ -365,7 +369,7 @@ export function registerInvoiceTools(client: WaveClient) {
         `;
 
         const result = await client.mutate(mutation, {
-          input: { invoiceId: args.invoiceId },
+          input: { businessId, invoiceId: args.invoiceId },
         });
 
         if (!result.invoiceDelete.didSucceed) {

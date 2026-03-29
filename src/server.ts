@@ -31,14 +31,15 @@ import { registerReportingTools } from './tools/reporting-tools.js';
 import { registerReconciliationTools } from './tools/reconciliation-tools.js';
 
 /**
- * Basic runtime validation of tool arguments against the declared schema.
- * Checks: required fields present, string fields are strings, number fields are numbers,
- * boolean fields are booleans. Rejects unknown fields.
+ * Runtime validation of tool arguments against the declared schema.
+ * Checks: required fields present, type checks for string/number/boolean/object/array,
+ * enum validation, and recursive validation of nested objects and array items.
+ * Unknown top-level fields are allowed per MCP convention.
  */
 function validateArgs(
-  toolName: string,
   args: Record<string, any>,
-  schema: { properties?: Record<string, any>; required?: string[] }
+  schema: { properties?: Record<string, any>; required?: string[] },
+  path: string = ''
 ): string[] {
   const errors: string[] = [];
   const properties = schema.properties || {};
@@ -47,7 +48,7 @@ function validateArgs(
   // Check required fields
   for (const field of required) {
     if (args[field] === undefined || args[field] === null) {
-      errors.push(`Missing required field: "${field}"`);
+      errors.push(`Missing required field: "${path}${field}"`);
     }
   }
 
@@ -56,18 +57,44 @@ function validateArgs(
     const propDef = properties[key];
     if (!propDef) continue; // allow unknown fields (MCP convention)
 
+    const fieldPath = path ? `${path}${key}` : `${key}`;
+
     if (propDef.type === 'string' && typeof value !== 'string') {
-      errors.push(`Field "${key}" must be a string, got ${typeof value}`);
+      errors.push(`Field "${fieldPath}" must be a string, got ${typeof value}`);
     }
     if (propDef.type === 'number' && typeof value !== 'number') {
-      errors.push(`Field "${key}" must be a number, got ${typeof value}`);
+      errors.push(`Field "${fieldPath}" must be a number, got ${typeof value}`);
     }
     if (propDef.type === 'boolean' && typeof value !== 'boolean') {
-      errors.push(`Field "${key}" must be a boolean, got ${typeof value}`);
+      errors.push(`Field "${fieldPath}" must be a boolean, got ${typeof value}`);
     }
     // enum check
     if (propDef.enum && !propDef.enum.includes(value)) {
-      errors.push(`Field "${key}" must be one of: ${propDef.enum.join(', ')}`);
+      errors.push(`Field "${fieldPath}" must be one of: ${propDef.enum.join(', ')}`);
+    }
+    // Container type checks
+    if (propDef.type === 'object' && (typeof value !== 'object' || value === null || Array.isArray(value))) {
+      errors.push(`Field "${fieldPath}" must be an object, got ${Array.isArray(value) ? 'array' : typeof value}`);
+    }
+    if (propDef.type === 'array' && !Array.isArray(value)) {
+      errors.push(`Field "${fieldPath}" must be an array, got ${typeof value}`);
+    }
+    // Recursive object validation
+    if (propDef.type === 'object' && typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      errors.push(...validateArgs(value, propDef, `${fieldPath}.`));
+    }
+    // Array validation with item schema
+    if (propDef.type === 'array' && Array.isArray(value) && propDef.items) {
+      for (let i = 0; i < value.length; i++) {
+        const item = value[i];
+        if (propDef.items.type === 'object' && typeof item === 'object' && item !== null) {
+          errors.push(...validateArgs(item, propDef.items, `${fieldPath}[${i}].`));
+        } else if (propDef.items.type === 'string' && typeof item !== 'string') {
+          errors.push(`Field "${fieldPath}[${i}]" must be a string, got ${typeof item}`);
+        } else if (propDef.items.type === 'number' && typeof item !== 'number') {
+          errors.push(`Field "${fieldPath}[${i}]" must be a number, got ${typeof item}`);
+        }
+      }
     }
   }
 
@@ -90,7 +117,7 @@ export class WaveMCPServer {
           tools: {},
         },
         instructions: [
-          'Wave Accounting MCP server for Carrie\'s cleaning business.',
+          'Wave Accounting MCP server.',
           'Manages invoices, customers, products, and payment reconciliation via Wave\'s GraphQL API.',
           '',
           'WORKING WORKFLOWS:',
@@ -104,7 +131,7 @@ export class WaveMCPServer {
           '- businessId is set globally via credentials.json; most tools use it automatically.',
           '- All monetary amounts are Decimal strings (e.g. "100.00"), not numbers.',
           '- Dates use YYYY-MM-DD format.',
-          '- Use wave_switch_business to change the active business.',
+          '- Use wave_switch_business to change the active business for this session (reverts on restart).',
           '',
           'NOTES:',
           '- Bill tools have been removed (not available in Wave public API).',
@@ -177,7 +204,7 @@ export class WaveMCPServer {
       // Runtime input validation against declared schema
       const sanitizedArgs = args || {};
       if (tool.parameters) {
-        const validationErrors = validateArgs(name, sanitizedArgs, tool.parameters);
+        const validationErrors = validateArgs(sanitizedArgs, tool.parameters);
         if (validationErrors.length > 0) {
           return {
             content: [

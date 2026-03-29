@@ -19,7 +19,6 @@ export function registerTransactionTools(client: WaveClient) {
         type: 'object',
         properties: {
           businessId: { type: 'string', description: 'Business ID' },
-          accountId: { type: 'string', description: 'Filter by specific account ID' },
           startDate: { type: 'string', description: 'Start date (YYYY-MM-DD)' },
           endDate: { type: 'string', description: 'End date (YYYY-MM-DD)' },
           page: { type: 'number', description: 'Page number (default: 1)' },

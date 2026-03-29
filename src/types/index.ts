@@ -144,61 +144,6 @@ export interface Transaction {
   modifiedAt: string;
 }
 
-export interface Bill {
-  id: string;
-  vendor: Vendor;
-  status: 'DRAFT' | 'APPROVED' | 'PAID' | 'PARTIAL';
-  billNumber?: string;
-  billDate: string;
-  dueDate?: string;
-  amountDue: {
-    value: string;
-    currency: {
-      code: string;
-    };
-  };
-  amountPaid: {
-    value: string;
-  };
-  total: {
-    value: string;
-  };
-  items: BillItem[];
-  memo?: string;
-  createdAt: string;
-  modifiedAt: string;
-}
-
-export interface BillItem {
-  description: string;
-  quantity: number;
-  unitPrice: string;
-  total: {
-    value: string;
-  };
-  account?: Account;
-  taxes?: Tax[];
-}
-
-export interface Vendor {
-  id: string;
-  name: string;
-  email?: string;
-  address?: {
-    addressLine1?: string;
-    addressLine2?: string;
-    city?: string;
-    provinceCode?: string;
-    countryCode?: string;
-    postalCode?: string;
-  };
-  currency?: {
-    code: string;
-  };
-  createdAt: string;
-  modifiedAt: string;
-}
-
 export interface Estimate {
   id: string;
   estimateNumber: string;

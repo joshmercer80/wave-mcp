@@ -1,14 +1,14 @@
 /**
  * Wave Reconciliation Tools
  *
- * Venmo payment matching infrastructure for Carrie's cleaning business.
+ * Venmo payment matching infrastructure for Wave businesses.
  * Matches parsed Venmo payment data against open Wave invoices.
  *
  * Does NOT require Gmail MCP or Carrie's token to test — accepts
  * pre-parsed payment data as input.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { WaveClient } from '../client.js';
@@ -65,8 +65,8 @@ function appendReconEntry(entry: ReconEntry): void {
   writeFileSync(RECON_LOG_PATH, JSON.stringify(entry) + '\n', { flag: 'a', mode: 0o600 });
 }
 
-function makeFingerprint(name: string, amount: string, date: string): string {
-  return `${name.toLowerCase().trim()}|${amount}|${date}`;
+function makeFingerprint(businessId: string, name: string, amount: string, date: string): string {
+  return `${businessId}|${name.toLowerCase().trim()}|${amount}|${date}`;
 }
 
 export function registerReconciliationTools(client: WaveClient) {
@@ -88,7 +88,7 @@ export function registerReconciliationTools(client: WaveClient) {
         const businessId = args.businessId || client.getBusinessId();
         if (!businessId) throw new Error('Business ID is required.');
 
-        const fingerprint = makeFingerprint(args.venmoName, args.amount, args.date);
+        const fingerprint = makeFingerprint(businessId, args.venmoName, args.amount, args.date);
 
         // Check idempotency — skip if already processed
         const log = loadReconLog();

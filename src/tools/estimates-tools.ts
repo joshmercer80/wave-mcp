@@ -3,7 +3,6 @@
  */
 
 import type { WaveClient } from '../client.js';
-import type { Estimate } from '../types/index.js';
 
 export function registerEstimateTools(client: WaveClient) {
   return {
@@ -68,7 +67,20 @@ export function registerEstimateTools(client: WaveClient) {
           pageSize: Math.min(args.pageSize || 20, 100),
         });
 
-        return result.business.estimates;
+        let edges = result.business.estimates.edges;
+
+        if (args.status) {
+          edges = edges.filter((e: any) => e.node.status === args.status);
+        }
+
+        if (args.customerId) {
+          edges = edges.filter((e: any) => e.node.customer?.id === args.customerId);
+        }
+
+        return {
+          pageInfo: result.business.estimates.pageInfo,
+          edges,
+        };
       },
     },
 
