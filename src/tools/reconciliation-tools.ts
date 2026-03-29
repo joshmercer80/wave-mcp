@@ -8,7 +8,7 @@
  * pre-parsed payment data as input.
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, chmodSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import type { WaveClient } from '../client.js';
@@ -33,8 +33,8 @@ function loadAliases(): AliasMap {
 }
 
 function saveAliases(aliases: AliasMap): void {
-  if (!existsSync(WAVE_DIR)) mkdirSync(WAVE_DIR, { recursive: true });
-  writeFileSync(ALIASES_PATH, JSON.stringify(aliases, null, 2));
+  if (!existsSync(WAVE_DIR)) mkdirSync(WAVE_DIR, { recursive: true, mode: 0o700 });
+  writeFileSync(ALIASES_PATH, JSON.stringify(aliases, null, 2), { mode: 0o600 });
 }
 
 // --- Reconciliation log helpers ---
@@ -61,8 +61,8 @@ function loadReconLog(): ReconEntry[] {
 }
 
 function appendReconEntry(entry: ReconEntry): void {
-  if (!existsSync(WAVE_DIR)) mkdirSync(WAVE_DIR, { recursive: true });
-  writeFileSync(RECON_LOG_PATH, JSON.stringify(entry) + '\n', { flag: 'a' });
+  if (!existsSync(WAVE_DIR)) mkdirSync(WAVE_DIR, { recursive: true, mode: 0o700 });
+  writeFileSync(RECON_LOG_PATH, JSON.stringify(entry) + '\n', { flag: 'a', mode: 0o600 });
 }
 
 function makeFingerprint(name: string, amount: string, date: string): string {
@@ -73,7 +73,7 @@ export function registerReconciliationTools(client: WaveClient) {
   return {
     wave_reconcile_venmo: {
       description:
-        'Match a Venmo payment against open Wave invoices. Accepts parsed payment data (name, amount, date) and returns match candidates. Does NOT mark anything as paid — use wave_mark_invoice_paid for that.',
+        'Match a Venmo payment against open Wave invoices (first 100 invoices). Accepts parsed payment data (name, amount, date) and returns match candidates. Does NOT mark anything as paid — use wave_mark_invoice_paid for that.',
       parameters: {
         type: 'object',
         properties: {
@@ -120,7 +120,6 @@ export function registerReconciliationTools(client: WaveClient) {
                     customer {
                       id
                       name
-                      email
                     }
                     total {
                       value
@@ -261,6 +260,43 @@ export function registerReconciliationTools(client: WaveClient) {
         const invoice = invResult.business.invoice;
         if (!invoice) {
           throw new Error(`Invoice ${args.invoiceId} not found.`);
+        }
+
+        // Guard: block if invoice is already fully paid
+        const currentDue = parseFloat(invoice.amountDue?.value || '0');
+        const requestedAmount = parseFloat(args.amount);
+
+        if (currentDue <= 0) {
+          return {
+            blocked: true,
+            message: `Invoice ${invoice.invoiceNumber} is already fully paid (amount due: $${invoice.amountDue?.value || '0.00'}). No payment recorded.`,
+            invoice: {
+              id: invoice.id,
+              number: invoice.invoiceNumber,
+              customer: invoice.customer?.name,
+              status: invoice.status,
+              total: invoice.total?.value,
+              amountDue: invoice.amountDue?.value,
+              amountPaid: invoice.amountPaid?.value,
+            },
+          };
+        }
+
+        // Guard: block if requested amount exceeds amount due (overpayment)
+        if (requestedAmount > currentDue + 0.01) {
+          return {
+            blocked: true,
+            message: `Payment amount $${args.amount} exceeds amount due $${invoice.amountDue?.value}. Reduce the amount or verify the correct invoice.`,
+            invoice: {
+              id: invoice.id,
+              number: invoice.invoiceNumber,
+              customer: invoice.customer?.name,
+              status: invoice.status,
+              total: invoice.total?.value,
+              amountDue: invoice.amountDue?.value,
+              amountPaid: invoice.amountPaid?.value,
+            },
+          };
         }
 
         // Preview mode — show what would happen
@@ -444,13 +480,14 @@ export function registerReconciliationTools(client: WaveClient) {
         // Most recent first
         entries.reverse();
 
+        const totalCount = entries.length;
         const limit = args.limit || 50;
-        entries = entries.slice(0, limit);
+        const returned = entries.slice(0, limit);
 
         return {
-          entries,
-          totalCount: entries.length,
-          path: RECON_LOG_PATH,
+          entries: returned,
+          returnedCount: returned.length,
+          totalCount,
         };
       },
     },
@@ -465,7 +502,6 @@ function formatInvoice(inv: any) {
     invoiceNumber: inv.invoiceNumber,
     status: inv.status,
     customer: inv.customer?.name,
-    customerEmail: inv.customer?.email,
     total: inv.total?.value,
     amountDue: inv.amountDue?.value,
     invoiceDate: inv.invoiceDate,

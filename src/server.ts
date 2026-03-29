@@ -30,6 +30,50 @@ import { registerBusinessTools } from './tools/businesses-tools.js';
 import { registerReportingTools } from './tools/reporting-tools.js';
 import { registerReconciliationTools } from './tools/reconciliation-tools.js';
 
+/**
+ * Basic runtime validation of tool arguments against the declared schema.
+ * Checks: required fields present, string fields are strings, number fields are numbers,
+ * boolean fields are booleans. Rejects unknown fields.
+ */
+function validateArgs(
+  toolName: string,
+  args: Record<string, any>,
+  schema: { properties?: Record<string, any>; required?: string[] }
+): string[] {
+  const errors: string[] = [];
+  const properties = schema.properties || {};
+  const required = schema.required || [];
+
+  // Check required fields
+  for (const field of required) {
+    if (args[field] === undefined || args[field] === null) {
+      errors.push(`Missing required field: "${field}"`);
+    }
+  }
+
+  // Type-check provided fields
+  for (const [key, value] of Object.entries(args)) {
+    const propDef = properties[key];
+    if (!propDef) continue; // allow unknown fields (MCP convention)
+
+    if (propDef.type === 'string' && typeof value !== 'string') {
+      errors.push(`Field "${key}" must be a string, got ${typeof value}`);
+    }
+    if (propDef.type === 'number' && typeof value !== 'number') {
+      errors.push(`Field "${key}" must be a number, got ${typeof value}`);
+    }
+    if (propDef.type === 'boolean' && typeof value !== 'boolean') {
+      errors.push(`Field "${key}" must be a boolean, got ${typeof value}`);
+    }
+    // enum check
+    if (propDef.enum && !propDef.enum.includes(value)) {
+      errors.push(`Field "${key}" must be one of: ${propDef.enum.join(', ')}`);
+    }
+  }
+
+  return errors;
+}
+
 export class WaveMCPServer {
   private server: Server;
   private client: WaveClient;
@@ -130,8 +174,25 @@ export class WaveMCPServer {
         };
       }
 
+      // Runtime input validation against declared schema
+      const sanitizedArgs = args || {};
+      if (tool.parameters) {
+        const validationErrors = validateArgs(name, sanitizedArgs, tool.parameters);
+        if (validationErrors.length > 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Invalid arguments for "${name}": ${validationErrors.join('; ')}`,
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+
       try {
-        const result = await tool.handler(args || {});
+        const result = await tool.handler(sanitizedArgs);
         return {
           content: [
             {

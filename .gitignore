@@ -7,3 +7,4 @@ memories/private/
 credentials.json
 customer-aliases.json
 reconciliation-log.jsonl
+manual-review.json
