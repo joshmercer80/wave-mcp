@@ -255,8 +255,8 @@ export function registerProductTools(client: WaveClient) {
       },
     },
 
-    wave_delete_product: {
-      description: 'Archive a product or service (soft delete)',
+    wave_archive_product: {
+      description: 'Archive a product or service. This is a soft archive — the product is hidden, not permanently deleted.',
       parameters: {
         type: 'object',
         properties: {

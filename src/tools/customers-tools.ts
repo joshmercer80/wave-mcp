@@ -263,7 +263,7 @@ export function registerCustomerTools(client: WaveClient) {
     },
 
     wave_delete_customer: {
-      description: 'Delete a customer (only works if they have no invoices)',
+      description: 'Delete a customer. Wave will reject this if the customer has existing invoices.',
       parameters: {
         type: 'object',
         properties: {
@@ -307,7 +307,7 @@ export function registerCustomerTools(client: WaveClient) {
     },
 
     wave_search_customers: {
-      description: 'Search customers by name or email (client-side filtering)',
+      description: 'Search customers by name or email (client-side filtering of the first 100 customers only)',
       parameters: {
         type: 'object',
         properties: {

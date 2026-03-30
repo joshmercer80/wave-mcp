@@ -14,7 +14,7 @@ import type { WaveClient } from '../client.js';
 export function registerTransactionTools(client: WaveClient) {
   return {
     wave_list_transactions: {
-      description: 'List transactions for a business (may not be available in all Wave API versions)',
+      description: '[BETA] List transactions for a business. This query may not be available in Wave\'s public API.',
       parameters: {
         type: 'object',
         properties: {
@@ -79,7 +79,7 @@ export function registerTransactionTools(client: WaveClient) {
     },
 
     wave_get_transaction: {
-      description: 'Get detailed information about a specific transaction',
+      description: '[BETA] Get detailed information about a specific transaction. This query may not be available in Wave\'s public API.',
       parameters: {
         type: 'object',
         properties: {

@@ -65,7 +65,10 @@ function appendReconEntry(entry: ReconEntry): void {
   writeFileSync(RECON_LOG_PATH, JSON.stringify(entry) + '\n', { flag: 'a', mode: 0o600 });
 }
 
-function makeFingerprint(businessId: string, name: string, amount: string, date: string): string {
+function makeFingerprint(businessId: string, name: string, amount: string, date: string, venmoTransactionId?: string): string {
+  if (venmoTransactionId) {
+    return `${businessId}|venmo:${venmoTransactionId}`;
+  }
   return `${businessId}|${name.toLowerCase().trim()}|${amount}|${date}`;
 }
 
@@ -81,6 +84,7 @@ export function registerReconciliationTools(client: WaveClient) {
           venmoName: { type: 'string', description: 'Payer name from Venmo (e.g. "John Smith")' },
           amount: { type: 'string', description: 'Payment amount (e.g. "150.00")' },
           date: { type: 'string', description: 'Payment date (YYYY-MM-DD)' },
+          venmoTransactionId: { type: 'string', description: 'Venmo transaction ID for precise deduplication. Without this, same-day duplicate detection relies on name+amount+date which may miss true duplicates.' },
         },
         required: ['venmoName', 'amount', 'date'],
       },
@@ -88,7 +92,7 @@ export function registerReconciliationTools(client: WaveClient) {
         const businessId = args.businessId || client.getBusinessId();
         if (!businessId) throw new Error('Business ID is required.');
 
-        const fingerprint = makeFingerprint(businessId, args.venmoName, args.amount, args.date);
+        const fingerprint = makeFingerprint(businessId, args.venmoName, args.amount, args.date, args.venmoTransactionId);
 
         // Check idempotency — skip if already processed
         const log = loadReconLog();
@@ -201,7 +205,7 @@ export function registerReconciliationTools(client: WaveClient) {
         };
         appendReconEntry(entry);
 
-        return {
+        const result_obj: any = {
           status,
           venmoName: args.venmoName,
           resolvedName: resolvedName !== args.venmoName ? resolvedName : undefined,
@@ -212,6 +216,12 @@ export function registerReconciliationTools(client: WaveClient) {
           amountOnlyMatches: amountOnlyMatches.map(formatInvoice),
           message: statusMessage(status, exactMatches.length),
         };
+
+        if (!args.venmoTransactionId) {
+          result_obj.warning = 'No venmoTransactionId provided. Same-day duplicate detection is limited to name+amount+date. Pass venmoTransactionId for precise deduplication.';
+        }
+
+        return result_obj;
       },
     },
 

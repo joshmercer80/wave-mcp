@@ -7,7 +7,7 @@ import type { WaveClient } from '../client.js';
 export function registerReportingTools(client: WaveClient) {
   return {
     wave_profit_and_loss: {
-      description: 'Generate a Profit & Loss (Income Statement) report',
+      description: '[BETA] Generate a Profit & Loss (Income Statement) report. This query may not be available in Wave\'s public API.',
       parameters: {
         type: 'object',
         properties: {
@@ -70,7 +70,7 @@ export function registerReportingTools(client: WaveClient) {
     },
 
     wave_balance_sheet: {
-      description: 'Generate a Balance Sheet report',
+      description: '[BETA] Generate a Balance Sheet report. This query may not be available in Wave\'s public API.',
       parameters: {
         type: 'object',
         properties: {
@@ -135,7 +135,7 @@ export function registerReportingTools(client: WaveClient) {
     },
 
     wave_aged_receivables: {
-      description: 'Generate an Aged Receivables (A/R Aging) report',
+      description: '[BETA] Generate an Aged Receivables (A/R Aging) report. This query may not be available in Wave\'s public API.',
       parameters: {
         type: 'object',
         properties: {
@@ -185,7 +185,7 @@ export function registerReportingTools(client: WaveClient) {
     },
 
     wave_tax_summary: {
-      description: 'Generate a tax summary report for a date range',
+      description: '[BETA] Generate a tax summary report for a date range. This query may not be available in Wave\'s public API.',
       parameters: {
         type: 'object',
         properties: {
@@ -238,7 +238,7 @@ export function registerReportingTools(client: WaveClient) {
     },
 
     wave_cashflow: {
-      description: 'Generate a cashflow statement for a date range',
+      description: '[BETA] Generate a cashflow statement for a date range. This query may not be available in Wave\'s public API.',
       parameters: {
         type: 'object',
         properties: {
