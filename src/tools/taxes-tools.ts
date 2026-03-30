@@ -1,8 +1,13 @@
 /**
  * Wave Tax Tools
  *
- * Fixes from NoahMcGraw/wave-mcp:
- * - wave_create_tax: changed taxCreate -> salesTaxCreate (correct API mutation name)
+ * Fixes from schema introspection (2026-03-29):
+ * - wave_list_taxes: `taxes` -> `salesTaxes`, fields aligned to SalesTax type
+ * - wave_get_tax: `tax(id)` -> `salesTax(id)`, fields aligned to SalesTax type
+ * - wave_create_tax: already used `salesTaxCreate` (correct)
+ *
+ * SalesTax.rate takes a `for: Date` argument. We query `rates` (list of
+ * {effective, rate} objects) for the full rate history instead.
  */
 
 import type { WaveClient } from '../client.js';
@@ -15,7 +20,9 @@ export function registerTaxTools(client: WaveClient) {
         type: 'object',
         properties: {
           businessId: { type: 'string', description: 'Business ID' },
-          isArchived: { type: 'boolean', description: 'Include archived taxes (default: false)' },
+          isArchived: { type: 'boolean', description: 'Filter by archived status' },
+          page: { type: 'number', description: 'Page number (default: 1)' },
+          pageSize: { type: 'number', description: 'Results per page (default: 20)' },
         },
       },
       handler: async (args: any) => {
@@ -23,33 +30,54 @@ export function registerTaxTools(client: WaveClient) {
         if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
-          query GetTaxes($businessId: ID!) {
+          query GetSalesTaxes($businessId: ID!, $page: Int!, $pageSize: Int!, $isArchived: Boolean) {
             business(id: $businessId) {
-              taxes {
-                id
-                name
-                abbreviation
-                description
-                rate
-                isArchived
+              salesTaxes(page: $page, pageSize: $pageSize, isArchived: $isArchived) {
+                pageInfo {
+                  currentPage
+                  totalPages
+                  totalCount
+                }
+                edges {
+                  node {
+                    id
+                    name
+                    abbreviation
+                    description
+                    taxNumber
+                    showTaxNumberOnInvoices
+                    rates {
+                      effective
+                      rate
+                    }
+                    isCompound
+                    isRecoverable
+                    isArchived
+                    createdAt
+                    modifiedAt
+                  }
+                }
               }
             }
           }
         `;
 
-        const result = await client.query(query, { businessId });
+        const result = await client.query(query, {
+          businessId,
+          page: args.page || 1,
+          pageSize: Math.min(args.pageSize || 20, 100),
+          isArchived: args.isArchived,
+        });
 
-        let taxes = result.business.taxes;
-        if (args.isArchived === false) {
-          taxes = taxes.filter((t: any) => !t.isArchived);
-        }
-
-        return taxes;
+        return {
+          pageInfo: result.business.salesTaxes.pageInfo,
+          taxes: result.business.salesTaxes.edges.map((e: any) => e.node),
+        };
       },
     },
 
     wave_get_tax: {
-      description: 'Get detailed information about a specific tax',
+      description: 'Get detailed information about a specific sales tax',
       parameters: {
         type: 'object',
         properties: {
@@ -63,15 +91,24 @@ export function registerTaxTools(client: WaveClient) {
         if (!businessId) throw new Error('Business ID is required.');
 
         const query = `
-          query GetTax($businessId: ID!, $taxId: ID!) {
+          query GetSalesTax($businessId: ID!, $taxId: ID!) {
             business(id: $businessId) {
-              tax(id: $taxId) {
+              salesTax(id: $taxId) {
                 id
                 name
                 abbreviation
                 description
-                rate
+                taxNumber
+                showTaxNumberOnInvoices
+                rates {
+                  effective
+                  rate
+                }
+                isCompound
+                isRecoverable
                 isArchived
+                createdAt
+                modifiedAt
               }
             }
           }
@@ -82,7 +119,7 @@ export function registerTaxTools(client: WaveClient) {
           taxId: args.taxId,
         });
 
-        return result.business.tax;
+        return result.business.salesTax;
       },
     },
 
@@ -96,6 +133,10 @@ export function registerTaxTools(client: WaveClient) {
           abbreviation: { type: 'string', description: 'Tax abbreviation (e.g., "ST")' },
           rate: { type: 'string', description: 'Tax rate as decimal (e.g., "0.0875" for 8.75%)' },
           description: { type: 'string', description: 'Tax description' },
+          taxNumber: { type: 'string', description: 'Tax registration number' },
+          showTaxNumberOnInvoices: { type: 'boolean', description: 'Show tax number on invoices' },
+          isCompound: { type: 'boolean', description: 'Whether this is a compound tax' },
+          isRecoverable: { type: 'boolean', description: 'Whether this tax is recoverable' },
         },
         required: ['name', 'rate'],
       },
@@ -103,7 +144,6 @@ export function registerTaxTools(client: WaveClient) {
         const businessId = args.businessId || client.getBusinessId();
         if (!businessId) throw new Error('Business ID is required.');
 
-        // FIX: Wave API uses salesTaxCreate, not taxCreate
         const mutation = `
           mutation CreateSalesTax($input: SalesTaxCreateInput!) {
             salesTaxCreate(input: $input) {
@@ -111,8 +151,15 @@ export function registerTaxTools(client: WaveClient) {
                 id
                 name
                 abbreviation
-                rate
                 description
+                taxNumber
+                rates {
+                  effective
+                  rate
+                }
+                isCompound
+                isRecoverable
+                isArchived
               }
               didSucceed
               inputErrors {
@@ -130,6 +177,10 @@ export function registerTaxTools(client: WaveClient) {
             abbreviation: args.abbreviation,
             rate: args.rate,
             description: args.description,
+            taxNumber: args.taxNumber,
+            showTaxNumberOnInvoices: args.showTaxNumberOnInvoices,
+            isCompound: args.isCompound,
+            isRecoverable: args.isRecoverable,
           },
         });
 

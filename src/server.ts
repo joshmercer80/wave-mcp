@@ -118,7 +118,7 @@ export class WaveMCPServer {
         },
         instructions: [
           'Wave Accounting MCP server.',
-          'Manages invoices, customers, products, and payment reconciliation via Wave\'s GraphQL API.',
+          'Manages invoices, customers, products, estimates, taxes, and payment reconciliation via Wave\'s GraphQL API.',
           '',
           'WORKING WORKFLOWS:',
           '- Invoice creation: wave_list_products -> wave_create_invoice (DRAFT) -> wave_approve_invoice -> wave_send_invoice',
@@ -126,6 +126,8 @@ export class WaveMCPServer {
           '- Receipt sending: wave_send_payment_receipt (invoicePaymentReceiptSend mutation)',
           '- Venmo reconciliation: wave_reconcile_venmo (match payments to open invoices)',
           '- Mark invoice paid: wave_mark_invoice_paid (confirmation-gated wrapper)',
+          '- Estimate workflow: wave_create_estimate -> wave_approve_estimate -> wave_send_estimate',
+          '- Transaction entry: wave_create_transaction (moneyTransactionCreate mutation)',
           '',
           'CONVENTIONS:',
           '- businessId is set globally via credentials.json; most tools use it automatically.',
@@ -133,10 +135,11 @@ export class WaveMCPServer {
           '- Dates use YYYY-MM-DD format.',
           '- Use wave_switch_business to change the active business for this session (reverts on restart).',
           '',
-          'NOTES:',
-          '- Bill tools have been removed (not available in Wave public API).',
-          '- Reporting tools (P&L, balance sheet, etc.) need schema validation with a live token.',
-          '- Transaction write tools (create, update, categorize) may not exist in the API schema.',
+          'NOT AVAILABLE IN WAVE PUBLIC API:',
+          '- Bill CRUD (removed).',
+          '- Reporting queries: P&L, balance sheet, aged receivables, cashflow, tax summary (removed).',
+          '- Transaction listing/reading (only create is available).',
+          '- Estimate-to-invoice conversion (not in API schema).',
         ].join('\n'),
       }
     );

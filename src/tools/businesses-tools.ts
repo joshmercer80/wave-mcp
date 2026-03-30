@@ -61,8 +61,8 @@ export function registerBusinessTools(client: WaveClient) {
                 addressLine1
                 addressLine2
                 city
-                provinceCode
-                countryCode
+                province { code name }
+                country { code name }
                 postalCode
               }
             }
@@ -105,8 +105,8 @@ export function registerBusinessTools(client: WaveClient) {
                 addressLine1
                 addressLine2
                 city
-                provinceCode
-                countryCode
+                province { code name }
+                country { code name }
                 postalCode
               }
             }

@@ -1,5 +1,13 @@
 /**
  * Wave Estimate Tools (Quotes/Proposals)
+ *
+ * Fixes from schema introspection (2026-03-29):
+ * - list/get: `expiryDate` -> `dueDate` (AREstimate has dueDate, not expiryDate)
+ * - list: added additional fields from AREstimate (amountDue, amountPaid, pdfUrl, viewUrl)
+ * - get: aligned item fields to EstimateItem type (subtotal, taxes as list)
+ * - update: `estimateUpdate`/`EstimateUpdateInput` -> `estimatePatch`/`EstimatePatchInput`
+ * - create: `expiryDate` -> `dueDate` in input
+ * - convert_to_invoice: REMOVED (estimateConvertToInvoice does not exist in Wave API)
  */
 
 import type { WaveClient } from '../client.js';
@@ -12,10 +20,10 @@ export function registerEstimateTools(client: WaveClient) {
         type: 'object',
         properties: {
           businessId: { type: 'string', description: 'Business ID' },
-          status: { 
-            type: 'string', 
-            enum: ['DRAFT', 'SENT', 'VIEWED', 'APPROVED', 'REJECTED'],
-            description: 'Filter by estimate status' 
+          status: {
+            type: 'string',
+            enum: ['ACCEPTED', 'ACTIVE', 'APPROVED', 'CONVERTED', 'DRAFT', 'EXPIRED', 'PAID', 'PARTIAL', 'REJECTED', 'SENT', 'UNPAID', 'VIEWED'],
+            description: 'Filter by estimate status',
           },
           customerId: { type: 'string', description: 'Filter by customer ID' },
           page: { type: 'number', description: 'Page number (default: 1)' },
@@ -27,9 +35,9 @@ export function registerEstimateTools(client: WaveClient) {
         if (!businessId) throw new Error('businessId required');
 
         const query = `
-          query GetEstimates($businessId: ID!, $page: Int!, $pageSize: Int!) {
+          query GetEstimates($businessId: ID!, $page: Int!, $pageSize: Int!, $status: EstimateListStatusFilter, $customerId: ID) {
             business(id: $businessId) {
-              estimates(page: $page, pageSize: $pageSize) {
+              estimates(page: $page, pageSize: $pageSize, status: $status, customerId: $customerId) {
                 pageInfo {
                   currentPage
                   totalPages
@@ -42,16 +50,25 @@ export function registerEstimateTools(client: WaveClient) {
                     status
                     title
                     estimateDate
-                    expiryDate
+                    dueDate
                     customer {
                       id
                       name
                       email
                     }
+                    amountDue {
+                      value
+                      currency { code }
+                    }
+                    amountPaid {
+                      value
+                    }
                     total {
                       value
                       currency { code }
                     }
+                    pdfUrl
+                    viewUrl
                     createdAt
                     modifiedAt
                   }
@@ -65,21 +82,13 @@ export function registerEstimateTools(client: WaveClient) {
           businessId,
           page: args.page || 1,
           pageSize: Math.min(args.pageSize || 20, 100),
+          status: args.status,
+          customerId: args.customerId,
         });
-
-        let edges = result.business.estimates.edges;
-
-        if (args.status) {
-          edges = edges.filter((e: any) => e.node.status === args.status);
-        }
-
-        if (args.customerId) {
-          edges = edges.filter((e: any) => e.node.customer?.id === args.customerId);
-        }
 
         return {
           pageInfo: result.business.estimates.pageInfo,
-          edges,
+          estimates: result.business.estimates.edges.map((e: any) => e.node),
         };
       },
     },
@@ -108,7 +117,8 @@ export function registerEstimateTools(client: WaveClient) {
                 title
                 subhead
                 estimateDate
-                expiryDate
+                dueDate
+                poNumber
                 customer {
                   id
                   name
@@ -117,9 +127,11 @@ export function registerEstimateTools(client: WaveClient) {
                   lastName
                 }
                 items {
+                  id
                   description
                   quantity
                   unitPrice
+                  subtotal { value }
                   total { value }
                   product {
                     id
@@ -128,15 +140,29 @@ export function registerEstimateTools(client: WaveClient) {
                   taxes {
                     id
                     name
-                    rate
                   }
+                }
+                amountDue {
+                  value
+                  currency { code }
+                }
+                amountPaid {
+                  value
                 }
                 total {
                   value
                   currency { code symbol }
                 }
+                taxTotal {
+                  value
+                }
+                subtotal {
+                  value
+                }
                 footer
                 memo
+                pdfUrl
+                viewUrl
                 createdAt
                 modifiedAt
               }
@@ -161,7 +187,7 @@ export function registerEstimateTools(client: WaveClient) {
           businessId: { type: 'string', description: 'Business ID' },
           customerId: { type: 'string', description: 'Customer ID' },
           estimateDate: { type: 'string', description: 'Estimate date (YYYY-MM-DD)' },
-          expiryDate: { type: 'string', description: 'Expiry date (YYYY-MM-DD)' },
+          dueDate: { type: 'string', description: 'Due/expiry date (YYYY-MM-DD)' },
           title: { type: 'string', description: 'Estimate title' },
           subhead: { type: 'string', description: 'Estimate subhead' },
           footer: { type: 'string', description: 'Footer text' },
@@ -174,9 +200,8 @@ export function registerEstimateTools(client: WaveClient) {
               properties: {
                 productId: { type: 'string', description: 'Product ID (optional)' },
                 description: { type: 'string', description: 'Line item description' },
-                quantity: { type: 'number', description: 'Quantity' },
-                unitPrice: { type: 'string', description: 'Unit price' },
-                taxIds: { type: 'array', items: { type: 'string' }, description: 'Tax IDs to apply' },
+                quantity: { type: 'string', description: 'Quantity (decimal string)' },
+                unitPrice: { type: 'string', description: 'Unit price (decimal string)' },
               },
               required: ['description', 'quantity', 'unitPrice'],
             },
@@ -206,11 +231,11 @@ export function registerEstimateTools(client: WaveClient) {
           }
         `;
 
-        const input = {
+        const input: any = {
           businessId,
           customerId: args.customerId,
           estimateDate: args.estimateDate,
-          expiryDate: args.expiryDate,
+          dueDate: args.dueDate,
           title: args.title,
           subhead: args.subhead,
           footer: args.footer,
@@ -229,17 +254,20 @@ export function registerEstimateTools(client: WaveClient) {
     },
 
     wave_update_estimate: {
-      description: 'Update an existing estimate',
+      description: 'Update an existing estimate (uses estimatePatch mutation)',
       parameters: {
         type: 'object',
         properties: {
           businessId: { type: 'string', description: 'Business ID' },
           estimateId: { type: 'string', description: 'Estimate ID' },
+          customerId: { type: 'string', description: 'Customer ID' },
           title: { type: 'string', description: 'Estimate title' },
           subhead: { type: 'string', description: 'Estimate subhead' },
           footer: { type: 'string', description: 'Footer text' },
           memo: { type: 'string', description: 'Internal memo' },
-          expiryDate: { type: 'string', description: 'Expiry date (YYYY-MM-DD)' },
+          dueDate: { type: 'string', description: 'Due/expiry date (YYYY-MM-DD)' },
+          estimateDate: { type: 'string', description: 'Estimate date (YYYY-MM-DD)' },
+          poNumber: { type: 'string', description: 'PO number' },
         },
         required: ['estimateId'],
       },
@@ -248,8 +276,8 @@ export function registerEstimateTools(client: WaveClient) {
         if (!businessId) throw new Error('businessId required');
 
         const mutation = `
-          mutation UpdateEstimate($input: EstimateUpdateInput!) {
-            estimateUpdate(input: $input) {
+          mutation PatchEstimate($input: EstimatePatchInput!) {
+            estimatePatch(input: $input) {
               estimate {
                 id
                 estimateNumber
@@ -258,7 +286,9 @@ export function registerEstimateTools(client: WaveClient) {
                 subhead
                 footer
                 memo
-                expiryDate
+                dueDate
+                estimateDate
+                poNumber
               }
               didSucceed
               inputErrors {
@@ -269,23 +299,24 @@ export function registerEstimateTools(client: WaveClient) {
           }
         `;
 
-        const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            estimateId: args.estimateId,
-            title: args.title,
-            subhead: args.subhead,
-            footer: args.footer,
-            memo: args.memo,
-            expiryDate: args.expiryDate,
-          },
-        });
+        // Build input, omitting undefined fields so Wave doesn't null them out
+        const input: any = { id: args.estimateId };
+        if (args.customerId !== undefined) input.customerId = args.customerId;
+        if (args.title !== undefined) input.title = args.title;
+        if (args.subhead !== undefined) input.subhead = args.subhead;
+        if (args.footer !== undefined) input.footer = args.footer;
+        if (args.memo !== undefined) input.memo = args.memo;
+        if (args.dueDate !== undefined) input.dueDate = args.dueDate;
+        if (args.estimateDate !== undefined) input.estimateDate = args.estimateDate;
+        if (args.poNumber !== undefined) input.poNumber = args.poNumber;
 
-        if (!result.estimateUpdate.didSucceed) {
-          throw new Error(`Failed to update estimate: ${JSON.stringify(result.estimateUpdate.inputErrors)}`);
+        const result = await client.mutate(mutation, { input });
+
+        if (!result.estimatePatch.didSucceed) {
+          throw new Error(`Failed to update estimate: ${JSON.stringify(result.estimatePatch.inputErrors)}`);
         }
 
-        return result.estimateUpdate.estimate;
+        return result.estimatePatch.estimate;
       },
     },
 
@@ -299,6 +330,8 @@ export function registerEstimateTools(client: WaveClient) {
           to: { type: 'array', items: { type: 'string' }, description: 'Recipient email addresses' },
           subject: { type: 'string', description: 'Email subject' },
           message: { type: 'string', description: 'Email message body' },
+          attachPDF: { type: 'boolean', description: 'Attach PDF to email' },
+          ccMyself: { type: 'boolean', description: 'CC yourself on the email' },
         },
         required: ['estimateId'],
       },
@@ -309,6 +342,11 @@ export function registerEstimateTools(client: WaveClient) {
         const mutation = `
           mutation SendEstimate($input: EstimateSendInput!) {
             estimateSend(input: $input) {
+              estimate {
+                id
+                status
+                lastSentAt
+              }
               didSucceed
               inputErrors {
                 message
@@ -318,49 +356,42 @@ export function registerEstimateTools(client: WaveClient) {
           }
         `;
 
-        const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            estimateId: args.estimateId,
-            to: args.to,
-            subject: args.subject,
-            message: args.message,
-          },
-        });
+        const input: any = {
+          estimateId: args.estimateId,
+          to: args.to,
+          subject: args.subject,
+          message: args.message,
+        };
+        if (args.attachPDF !== undefined) input.attachPDF = args.attachPDF;
+        if (args.ccMyself !== undefined) input.ccMyself = args.ccMyself;
+
+        const result = await client.mutate(mutation, { input });
 
         if (!result.estimateSend.didSucceed) {
           throw new Error(`Failed to send estimate: ${JSON.stringify(result.estimateSend.inputErrors)}`);
         }
 
-        return { success: true, message: 'Estimate sent successfully' };
+        return result.estimateSend.estimate;
       },
     },
 
-    wave_convert_estimate_to_invoice: {
-      description: 'Convert an approved estimate into an invoice',
+    wave_approve_estimate: {
+      description: 'Approve a draft estimate',
       parameters: {
         type: 'object',
         properties: {
-          businessId: { type: 'string', description: 'Business ID' },
           estimateId: { type: 'string', description: 'Estimate ID' },
-          invoiceDate: { type: 'string', description: 'Invoice date (YYYY-MM-DD, defaults to today)' },
-          dueDate: { type: 'string', description: 'Invoice due date (YYYY-MM-DD)' },
         },
         required: ['estimateId'],
       },
       handler: async (args: any) => {
-        const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
-
         const mutation = `
-          mutation ConvertEstimateToInvoice($input: EstimateConvertToInvoiceInput!) {
-            estimateConvertToInvoice(input: $input) {
-              invoice {
+          mutation ApproveEstimate($input: EstimateApproveInput!) {
+            estimateApprove(input: $input) {
+              estimate {
                 id
-                invoiceNumber
+                estimateNumber
                 status
-                total { value currency { code } }
-                viewUrl
               }
               didSucceed
               inputErrors {
@@ -372,19 +403,48 @@ export function registerEstimateTools(client: WaveClient) {
         `;
 
         const result = await client.mutate(mutation, {
-          input: {
-            businessId,
-            estimateId: args.estimateId,
-            invoiceDate: args.invoiceDate,
-            dueDate: args.dueDate,
-          },
+          input: { estimateId: args.estimateId },
         });
 
-        if (!result.estimateConvertToInvoice.didSucceed) {
-          throw new Error(`Failed to convert estimate: ${JSON.stringify(result.estimateConvertToInvoice.inputErrors)}`);
+        if (!result.estimateApprove.didSucceed) {
+          throw new Error(`Failed to approve estimate: ${JSON.stringify(result.estimateApprove.inputErrors)}`);
         }
 
-        return result.estimateConvertToInvoice.invoice;
+        return result.estimateApprove.estimate;
+      },
+    },
+
+    wave_delete_estimate: {
+      description: 'Delete an estimate',
+      parameters: {
+        type: 'object',
+        properties: {
+          estimateId: { type: 'string', description: 'Estimate ID' },
+        },
+        required: ['estimateId'],
+      },
+      handler: async (args: any) => {
+        const mutation = `
+          mutation DeleteEstimate($input: EstimateDeleteInput!) {
+            estimateDelete(input: $input) {
+              didSucceed
+              inputErrors {
+                message
+                path
+              }
+            }
+          }
+        `;
+
+        const result = await client.mutate(mutation, {
+          input: { estimateId: args.estimateId },
+        });
+
+        if (!result.estimateDelete.didSucceed) {
+          throw new Error(`Failed to delete estimate: ${JSON.stringify(result.estimateDelete.inputErrors)}`);
+        }
+
+        return { success: true, message: 'Estimate deleted successfully' };
       },
     },
   };
