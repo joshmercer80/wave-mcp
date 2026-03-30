@@ -61,7 +61,7 @@ export function registerCustomerTools(client: WaveClient) {
     },
 
     wave_get_customer: {
-      description: 'Get detailed information about a specific customer including recent invoices',
+      description: 'Get detailed information about a specific customer (name, email, address, currency)',
       parameters: {
         type: 'object',
         properties: {
@@ -87,8 +87,8 @@ export function registerCustomerTools(client: WaveClient) {
                   addressLine1
                   addressLine2
                   city
-                  provinceCode
-                  countryCode
+                  province { code name }
+                  country { code name }
                   postalCode
                 }
                 currency { code }

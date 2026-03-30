@@ -72,7 +72,7 @@ export function registerProductTools(client: WaveClient) {
         if (args.isBought !== undefined) {
           products = products.filter((p: any) => p.isBought === args.isBought);
         }
-        if (args.isArchived === false) {
+        if (args.isArchived !== true) {
           products = products.filter((p: any) => !p.isArchived);
         }
 

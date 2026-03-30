@@ -142,8 +142,8 @@ export function registerInvoiceTools(client: WaveClient) {
                     name
                   }
                   taxes {
-                    name
-                    rate
+                    salesTax { id name }
+                    amount { value }
                   }
                 }
                 total {
@@ -541,10 +541,7 @@ export function registerInvoiceTools(client: WaveClient) {
                 id
                 payments {
                   id
-                  amount {
-                    value
-                    currency { code }
-                  }
+                  amount
                   paymentDate
                   paymentMethod
                   memo

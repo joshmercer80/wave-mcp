@@ -72,7 +72,7 @@ export function registerAccountTools(client: WaveClient) {
         if (args.type) {
           accounts = accounts.filter((a: any) => a.type.name === args.type);
         }
-        if (args.isArchived === false) {
+        if (args.isArchived !== true) {
           accounts = accounts.filter((a: any) => !a.isArchived);
         }
 

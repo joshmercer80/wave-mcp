@@ -152,7 +152,7 @@ export interface Estimate {
   title?: string;
   subhead?: string;
   estimateDate: string;
-  expiryDate?: string;
+  dueDate?: string;
   total: {
     value: string;
     currency: {

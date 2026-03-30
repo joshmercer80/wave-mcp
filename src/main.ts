@@ -94,6 +94,7 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error('Fatal error:', error);
+  console.error('Fatal error: The Wave MCP server could not start.');
+  console.error(error?.message || String(error));
   process.exit(1);
 });

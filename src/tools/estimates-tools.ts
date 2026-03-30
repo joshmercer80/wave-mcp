@@ -138,8 +138,8 @@ export function registerEstimateTools(client: WaveClient) {
                     name
                   }
                   taxes {
-                    id
-                    name
+                    salesTax { id name }
+                    amount { value }
                   }
                 }
                 amountDue {
@@ -246,7 +246,10 @@ export function registerEstimateTools(client: WaveClient) {
         const result = await client.mutate(mutation, { input });
 
         if (!result.estimateCreate.didSucceed) {
-          throw new Error(`Failed to create estimate: ${JSON.stringify(result.estimateCreate.inputErrors)}`);
+          const errs = result.estimateCreate.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not create estimate: ${errs}`);
         }
 
         return result.estimateCreate.estimate;
@@ -300,7 +303,7 @@ export function registerEstimateTools(client: WaveClient) {
         `;
 
         // Build input, omitting undefined fields so Wave doesn't null them out
-        const input: any = { id: args.estimateId };
+        const input: any = { businessId, id: args.estimateId };
         if (args.customerId !== undefined) input.customerId = args.customerId;
         if (args.title !== undefined) input.title = args.title;
         if (args.subhead !== undefined) input.subhead = args.subhead;
@@ -313,7 +316,10 @@ export function registerEstimateTools(client: WaveClient) {
         const result = await client.mutate(mutation, { input });
 
         if (!result.estimatePatch.didSucceed) {
-          throw new Error(`Failed to update estimate: ${JSON.stringify(result.estimatePatch.inputErrors)}`);
+          const errs = result.estimatePatch.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not update estimate: ${errs}`);
         }
 
         return result.estimatePatch.estimate;
@@ -325,7 +331,6 @@ export function registerEstimateTools(client: WaveClient) {
       parameters: {
         type: 'object',
         properties: {
-          businessId: { type: 'string', description: 'Business ID' },
           estimateId: { type: 'string', description: 'Estimate ID' },
           to: { type: 'array', items: { type: 'string' }, description: 'Recipient email addresses' },
           subject: { type: 'string', description: 'Email subject' },
@@ -333,11 +338,9 @@ export function registerEstimateTools(client: WaveClient) {
           attachPDF: { type: 'boolean', description: 'Attach PDF to email' },
           ccMyself: { type: 'boolean', description: 'CC yourself on the email' },
         },
-        required: ['estimateId'],
+        required: ['estimateId', 'to'],
       },
       handler: async (args: any) => {
-        const businessId = args.businessId || client.getBusinessId();
-        if (!businessId) throw new Error('businessId required');
 
         const mutation = `
           mutation SendEstimate($input: EstimateSendInput!) {
@@ -368,7 +371,10 @@ export function registerEstimateTools(client: WaveClient) {
         const result = await client.mutate(mutation, { input });
 
         if (!result.estimateSend.didSucceed) {
-          throw new Error(`Failed to send estimate: ${JSON.stringify(result.estimateSend.inputErrors)}`);
+          const errs = result.estimateSend.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not send estimate: ${errs}`);
         }
 
         return result.estimateSend.estimate;
@@ -407,7 +413,10 @@ export function registerEstimateTools(client: WaveClient) {
         });
 
         if (!result.estimateApprove.didSucceed) {
-          throw new Error(`Failed to approve estimate: ${JSON.stringify(result.estimateApprove.inputErrors)}`);
+          const errs = result.estimateApprove.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not approve estimate: ${errs}`);
         }
 
         return result.estimateApprove.estimate;
@@ -441,7 +450,10 @@ export function registerEstimateTools(client: WaveClient) {
         });
 
         if (!result.estimateDelete.didSucceed) {
-          throw new Error(`Failed to delete estimate: ${JSON.stringify(result.estimateDelete.inputErrors)}`);
+          const errs = result.estimateDelete.inputErrors
+            .map((e: any) => e.message)
+            .join('; ');
+          throw new Error(`Could not delete estimate: ${errs}`);
         }
 
         return { success: true, message: 'Estimate deleted successfully' };
